@@ -13,16 +13,17 @@ jobs:
     steps:
       - name: 🛠️ Prepare Container
         run: |
-          # Containers are barebones, we need to install git before checkout
+          # We tell Ubuntu not to pause for interactive prompts like timezones!
+          export DEBIAN_FRONTEND=noninteractive
           apt-get update
-          apt-get install -y git software-properties-common
+          apt-get install -y tzdata git software-properties-common
 
       - name: 📥 Checkout Source Code
         uses: actions/checkout@v4
 
       - name: 🛠️ Install Toolchain & Dependencies
         run: |
-          # Notice we removed "sudo" because we are already root in the container
+          export DEBIAN_FRONTEND=noninteractive
           apt-get update
           apt-get install -y bc build-essential flex bison libssl-dev libelf-dev clang llvm lld gcc-aarch64-linux-gnu tar zip wget python3
 
