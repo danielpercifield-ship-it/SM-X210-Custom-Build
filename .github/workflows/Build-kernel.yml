@@ -4,17 +4,27 @@ on:
 
 jobs:
   build-kernel:
-    # ---> THE FIX: Downgraded to 20.04 to match Samsung's capability maps! <---
+    # 1. Grab the fastest, newest server available
     runs-on: ubuntu-latest
+    # 2. THE FIX: Run everything inside a 20.04 sandbox!
+    container:
+      image: ubuntu:20.04
 
     steps:
+      - name: 🛠️ Prepare Container
+        run: |
+          # Containers are barebones, we need to install git before checkout
+          apt-get update
+          apt-get install -y git software-properties-common
+
       - name: 📥 Checkout Source Code
         uses: actions/checkout@v4
 
       - name: 🛠️ Install Toolchain & Dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y bc build-essential flex bison libssl-dev libelf-dev clang llvm lld gcc-aarch64-linux-gnu tar zip
+          # Notice we removed "sudo" because we are already root in the container
+          apt-get update
+          apt-get install -y bc build-essential flex bison libssl-dev libelf-dev clang llvm lld gcc-aarch64-linux-gnu tar zip wget python3
 
       - name: 📁 Setup & Permissions
         run: |
@@ -47,13 +57,6 @@ jobs:
           sed -i 's|"brk %0" : : "I"|"brk %0" : : "n"|g' arch/arm64/include/asm/kgdb.h || true
           ln -sf $(pwd)/arch/arm64/include/asm $(pwd)/include/asm || true
           sed -i 's|#define TRACE_INCLUDE_PATH .|#define TRACE_INCLUDE_PATH ../../kernel/sched/walt|g' kernel/sched/walt/trace.h || true
-
-          # ---> THE UBUNTU 24.04 ATOMIC FIX <---
-          # Injecting the missing dictionary files so Clang 18 knows what atomic64_t is!
-          sed -i '1i #include <linux/compiler.h>' include/asm-generic/atomic-instrumented.h || true
-          sed -i '1i #include <linux/types.h>' include/asm-generic/atomic-instrumented.h || true
-          sed -i '1i #include <linux/compiler.h>' arch/arm64/include/asm/atomic.h || true
-          sed -i '1i #include <linux/types.h>' arch/arm64/include/asm/atomic.h || true
           
           mkdir -p drivers/input/touchscreen/focaltech_touch_spi/include/firmware
           touch drivers/input/touchscreen/focaltech_touch_spi/include/firmware/fw_sample.i || true
@@ -71,9 +74,8 @@ jobs:
           
           make ARCH=arm64 HOSTCC=gcc CC=gcc olddefconfig
 
-      - name: 🔨 Generate SELinux Headers (The Clean Forge)
+      - name: 🔨 Generate SELinux Headers (The Native Forge)
         run: |
-          # With Ubuntu 20.04, we can compile this cleanly without sed hacks!
           make ARCH=arm64 CC="clang --target=aarch64-linux-gnu" CROSS_COMPILE=aarch64-linux-gnu- HOSTCC=gcc CC_FOR_BUILD=gcc -j$(nproc --all) prepare
           mkdir -p security/selinux/include
           
@@ -81,11 +83,11 @@ jobs:
           CLASSMAP=$(find security/selinux -name "classmap.h" | head -n 1)
           INITIAL_SID=$(find security/selinux -name "initial_sid_to_string.h" | head -n 1)
           
-          echo "Compiling generator natively on Ubuntu 20.04..."
+          echo "Compiling natively in the 20.04 container..."
           gcc -Isecurity/selinux/include -Iinclude "$GEN_C" -o selinux_gen
           ./selinux_gen "$CLASSMAP" "$INITIAL_SID" security/selinux/include/flask.h security/selinux/include/av_permissions.h
           
-          echo "Deploying generated Samsung headers..."
+          echo "Deploying Samsung Knox SELinux headers..."
           cp security/selinux/include/*.h drivers/kernelsu/ || true
           cp security/selinux/include/*.h drivers/kernelsu/kernel/ || true
 
@@ -114,4 +116,3 @@ jobs:
         with:
           name: TabA9Plus-KSU-Kernel
           path: Final_Kernel/TabA9Plus-KSU-Kernel.tar
-
