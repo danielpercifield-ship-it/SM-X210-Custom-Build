@@ -5,7 +5,7 @@ on:
 jobs:
   build-kernel:
     # ---> THE FIX: Downgraded to 20.04 to match Samsung's capability maps! <---
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-latest
 
     steps:
       - name: 📥 Checkout Source Code
