@@ -4,16 +4,13 @@ on:
 
 jobs:
   build-kernel:
-    # 1. Grab the fastest, newest server available
     runs-on: ubuntu-latest
-    # 2. THE FIX: Run everything inside a 20.04 sandbox!
     container:
       image: ubuntu:20.04
 
     steps:
       - name: 🛠️ Prepare Container
         run: |
-          # We tell Ubuntu not to pause for interactive prompts like timezones!
           export DEBIAN_FRONTEND=noninteractive
           apt-get update
           apt-get install -y tzdata git software-properties-common
@@ -25,11 +22,13 @@ jobs:
         run: |
           export DEBIAN_FRONTEND=noninteractive
           apt-get update
-          apt-get install -y bc build-essential flex bison libssl-dev libelf-dev clang llvm lld gcc-aarch64-linux-gnu tar zip wget python3
+          # ADDED cpio AND xz-utils TO FIX ERROR 127
+          apt-get install -y bc build-essential flex bison libssl-dev libelf-dev clang llvm lld gcc-aarch64-linux-gnu tar zip wget python3 cpio xz-utils
 
       - name: 📁 Setup & Permissions
         run: |
-          find scripts/ -type f -exec chmod +x {} + || true
+          # UNLOCKS ALL SCRIPTS EVERYWHERE TO FIX VDSO PERMISSION DENIED
+          find . -type f -name "*.sh" -exec chmod +x {} + || true
           chmod +x scripts/gcc-wrapper.py || true
           
           if ! grep -q "kernelsu" drivers/Makefile; then
@@ -59,6 +58,9 @@ jobs:
           ln -sf $(pwd)/arch/arm64/include/asm $(pwd)/include/asm || true
           sed -i 's|#define TRACE_INCLUDE_PATH .|#define TRACE_INCLUDE_PATH ../../kernel/sched/walt|g' kernel/sched/walt/trace.h || true
           
+          # FIX FOR KERNELSU current_sid REDEFINITION CLASH
+          sed -i 's/static inline u32 current_sid(void)/static inline u32 ksu_current_sid_dummy(void)/g' drivers/kernelsu/selinux/selinux.h || true
+          
           mkdir -p drivers/input/touchscreen/focaltech_touch_spi/include/firmware
           touch drivers/input/touchscreen/focaltech_touch_spi/include/firmware/fw_sample.i || true
 
@@ -75,24 +77,28 @@ jobs:
           
           make ARCH=arm64 HOSTCC=gcc CC=gcc olddefconfig
 
-      - name: 🔨 Resolve SELinux Headers (The KernelSU Failsafe)
+      - name: 🔨 Generate SELinux Headers (The Isolated Forge)
         run: |
           make ARCH=arm64 CC="clang --target=aarch64-linux-gnu" CROSS_COMPILE=aarch64-linux-gnu- HOSTCC=gcc CC_FOR_BUILD=gcc -j$(nproc --all) prepare
           mkdir -p security/selinux/include
           
-          echo "Bypassing compilation entirely. Fetching pre-compiled headers directly from KernelSU's emergency stash..."
+          GEN_C=$(find scripts/selinux -name "genheaders.c" | head -n 1)
+          CLASSMAP=$(find security/selinux -name "classmap.h" | head -n 1)
+          INITIAL_SID=$(find security/selinux -name "initial_sid_to_string.h" | head -n 1)
           
-          # Fetch the universal Android SELinux headers that KernelSU hosts specifically to bypass broken build systems
-          wget -q https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/selinux/flask.h -O security/selinux/include/flask.h || true
-          wget -q https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/selinux/av_permissions.h -O security/selinux/include/av_permissions.h || true
+          echo "Isolating Samsung's generator from raw kernel headers to prevent fd_set clash..."
+          sed -i 's/#include <linux\/socket.h>//g' "$CLASSMAP" || true
+          sed -i 's/#include <linux\/capability.h>//g' "$CLASSMAP" || true
+          sed -i '1i #define PF_MAX 45' "$CLASSMAP" || true
           
-          echo "Deploying failsafe headers to KernelSU..."
+          echo "Compiling natively in the 20.04 container..."
+          # Notice we removed -Iinclude so gcc doesn't panic over types!
+          gcc -Isecurity/selinux/include "$GEN_C" -o selinux_gen
+          ./selinux_gen "$CLASSMAP" "$INITIAL_SID" security/selinux/include/flask.h security/selinux/include/av_permissions.h
+          
+          echo "Deploying TRUE Samsung Knox SELinux headers..."
           cp security/selinux/include/*.h drivers/kernelsu/ || true
           cp security/selinux/include/*.h drivers/kernelsu/kernel/ || true
-          
-          # Final sanity check to ensure the files actually exist before compiling
-          ls -la security/selinux/include/
-
 
       - name: 🔨 Compile Kernel (The Main Build)
         run: |
