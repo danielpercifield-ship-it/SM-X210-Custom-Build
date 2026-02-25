@@ -26,9 +26,10 @@ jobs:
 
       - name: 📁 Setup & Permissions
         run: |
-          # UNLOCK ALL SCRIPTS
+          # UNLOCK EVERYTHING
           find . -type f -name "*.sh" -exec chmod +x {} + || true
-          find scripts/ -type f -exec chmod +x {} + || true
+          chmod -R +x scripts/ || true
+          chmod -R +x arch/arm64/kernel/vdso/ || true
           chmod +x scripts/config || true
           
           if ! grep -q "kernelsu" drivers/Makefile; then
@@ -59,6 +60,10 @@ jobs:
           sed -i 's|#define TRACE_INCLUDE_PATH .|#define TRACE_INCLUDE_PATH ../../kernel/sched/walt|g' kernel/sched/walt/trace.h || true
           
           sed -i 's/static inline u32 current_sid(void)/static inline u32 ksu_current_sid_dummy(void)/g' drivers/kernelsu/selinux/selinux.h || true
+          
+          # ---> THE VDSO MACRO FIX <---
+          # Deletes the redundant extern declarations that crash when combined with the auto-generated macros
+          sed -i '/extern unsigned long vdso_offset_/d' arch/arm64/include/asm/vdso.h || true
           
           mkdir -p drivers/input/touchscreen/focaltech_touch_spi/include/firmware
           touch drivers/input/touchscreen/focaltech_touch_spi/include/firmware/fw_sample.i || true
