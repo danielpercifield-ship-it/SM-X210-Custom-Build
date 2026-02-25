@@ -47,6 +47,13 @@ jobs:
           sed -i 's|"brk %0" : : "I"|"brk %0" : : "n"|g' arch/arm64/include/asm/kgdb.h || true
           ln -sf $(pwd)/arch/arm64/include/asm $(pwd)/include/asm || true
           sed -i 's|#define TRACE_INCLUDE_PATH .|#define TRACE_INCLUDE_PATH ../../kernel/sched/walt|g' kernel/sched/walt/trace.h || true
+
+          # ---> THE UBUNTU 24.04 ATOMIC FIX <---
+          # Injecting the missing dictionary files so Clang 18 knows what atomic64_t is!
+          sed -i '1i #include <linux/compiler.h>' include/asm-generic/atomic-instrumented.h || true
+          sed -i '1i #include <linux/types.h>' include/asm-generic/atomic-instrumented.h || true
+          sed -i '1i #include <linux/compiler.h>' arch/arm64/include/asm/atomic.h || true
+          sed -i '1i #include <linux/types.h>' arch/arm64/include/asm/atomic.h || true
           
           mkdir -p drivers/input/touchscreen/focaltech_touch_spi/include/firmware
           touch drivers/input/touchscreen/focaltech_touch_spi/include/firmware/fw_sample.i || true
