@@ -34,13 +34,19 @@ jobs:
 
       - name: 📁 Standardize Folder Structure & Makefiles
         run: |
-          # 1. Clear out any previous messy Makefile edits
+          # 1. FORCE PERMISSIONS ON ALL SCRIPTS
+          # This fixes the "Permission denied" errors on gcc-version.sh and others
+          find . -type f -name "*.sh" -exec chmod +x {} +
+          chmod -R +x scripts/
+          chmod -R +x arch/arm64/kernel/vdso/
+          
+          # 2. Clear out any previous messy Makefile edits
           sed -i '/kernelsu/d' drivers/Makefile || true
           
-          # 2. Re-add KernelSU to the drivers list
+          # 3. Re-add KernelSU to the drivers list
           echo 'obj-y += kernelsu/' >> drivers/Makefile
           
-          # 3. Create the missing Sub-Makefiles for recursive building
+          # 4. Create the missing Sub-Makefiles for recursive building
           mkdir -p drivers/kernelsu/kernel
           mkdir -p drivers/kernelsu/selinux
           
