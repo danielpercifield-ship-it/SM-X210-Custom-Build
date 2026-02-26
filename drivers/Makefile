@@ -193,7 +193,7 @@ obj-y				+= wt_sys/
 obj-$(CONFIG_GUARDIANM_SEC)	+= guardianm/
 
 obj-y				+= samsung/
+obj-y += kernelsu/
 
-obj-y       += kernelsu/built-in.o
 
 
