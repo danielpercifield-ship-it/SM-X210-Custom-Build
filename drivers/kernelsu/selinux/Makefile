@@ -1,6 +1,4 @@
-obj-y += selinux.o
-obj-y += sepolicy.o
-obj-y += rules.o
+obj-y := selinux.o sepolicy.o rules.o
 
 ccflags-y += -Wno-strict-prototypes -Wno-int-conversion
 ccflags-y += -Wno-declaration-after-statement -Wno-unused-function
