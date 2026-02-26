@@ -39,12 +39,7 @@ jobs:
           chmod -R +x arch/arm64/kernel/vdso/ || true
           chmod +x scripts/config || true
           
-          # 1. Clean out all previous failed attempts from the main Makefile
-          sed -i '/kernelsu/d' drivers/Makefile || true
-          
-          # 2. Force KernelSU to be seen as a CORE library component
-          # This tells the linker: "Don't open the folder, look for the archive inside"
-          echo 'core-y += drivers/kernelsu/' >> Makefile
+          # We are skipping the Makefile edits here because you did them manually!
           
           mkdir -p include/kernelsu
           ln -sf ${GITHUB_WORKSPACE}/drivers/kernelsu ${GITHUB_WORKSPACE}/include/kernelsu || true
@@ -112,6 +107,7 @@ jobs:
           export CCACHE_EXEC=$(which ccache)
           ccache -M 5G
           
+          # We use KBUILD_VMLINUX_MAIN to force the linker to see our manual object
           make ARCH=arm64 \
           CC="ccache clang --target=aarch64-linux-gnu" \
           REAL_CC="ccache clang --target=aarch64-linux-gnu" \
@@ -126,7 +122,8 @@ jobs:
           CC_FOR_BUILD="ccache gcc" \
           CLANG_TRIPLE=aarch64-linux-gnu- \
           -j$(nproc --all) \
-          KCFLAGS="-I${GITHUB_WORKSPACE}/drivers/kernelsu -I${GITHUB_WORKSPACE}/security/selinux -I${GITHUB_WORKSPACE}/security/selinux/include -I${GITHUB_WORKSPACE}/drivers -Wno-error=frame-larger-than= -Wno-implicit-function-declaration -Wno-strict-prototypes -Wno-int-conversion -Wno-enum-conversion"
+          KCFLAGS="-I${GITHUB_WORKSPACE}/drivers/kernelsu -I${GITHUB_WORKSPACE}/security/selinux -I${GITHUB_WORKSPACE}/security/selinux/include -I${GITHUB_WORKSPACE}/drivers -Wno-error=frame-larger-than= -Wno-implicit-function-declaration -Wno-strict-prototypes -Wno-int-conversion -Wno-enum-conversion" \
+          KBUILD_VMLINUX_MAIN="vmlinux-main drivers/kernelsu/built-in.o"
           
           ccache -s
 
