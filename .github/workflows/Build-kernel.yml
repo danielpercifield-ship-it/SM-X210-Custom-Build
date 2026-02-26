@@ -39,10 +39,12 @@ jobs:
           chmod -R +x arch/arm64/kernel/vdso/ || true
           chmod +x scripts/config || true
           
-          # POINT TO THE OBJECT, NOT THE FOLDER
-          if ! grep -q "kernelsu/built-in.a" drivers/Makefile; then
-            echo 'obj-y += kernelsu/built-in.a' >> drivers/Makefile
-          fi
+          # ---> THE GHOST-BUSTER FIX <---
+          # 1. Wipe any previous messy attempts from the Makefile
+          sed -i '/kernelsu/d' drivers/Makefile || true
+          
+          # 2. Add it back using the cleanest possible syntax
+          echo 'obj-y += kernelsu/' >> drivers/Makefile
           
           mkdir -p include/kernelsu
           ln -sf ${GITHUB_WORKSPACE}/drivers/kernelsu ${GITHUB_WORKSPACE}/include/kernelsu || true
