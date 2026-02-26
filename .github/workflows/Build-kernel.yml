@@ -74,7 +74,15 @@ jobs:
 
       - name: 🩹 Apply Deep Source Code Fixes
         run: |
-          # Fixing specific Samsung/KSU clashes
+          # 1. FIX: VDSO Offset Collision
+          # This deletes the line declaring 'vdso_offset_sigtramp' so the macro can take over
+          sed -i '/extern unsigned long vdso_offset_sigtramp;/d' arch/arm64/include/asm/vdso.h || true
+          
+          # 2. FIX: WALT Trace Include Path
+          # This tells the trace system exactly where to find the scheduler headers
+          sed -i 's|#define TRACE_INCLUDE_PATH .|#define TRACE_INCLUDE_PATH ../../kernel/sched/walt|g' kernel/sched/walt/trace.h || true
+
+          # 3. Existing Fixes (Keep these)
           sed -i 's|register unsigned long current_stack_pointer asm ("sp");|#define current_stack_pointer ({ unsigned long sp; asm("mov %0, sp" : "=r"(sp)); sp; })|g' arch/arm64/include/asm/stack_pointer.h || true
           sed -i 's/static inline u32 current_sid(void)/static inline u32 ksu_current_sid_dummy(void)/g' drivers/kernelsu/selinux/selinux.h || true
           sed -i 's/!!!current->seccomp.mode/0/g' drivers/kernelsu/app_profile.c || true
