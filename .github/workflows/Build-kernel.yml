@@ -39,12 +39,13 @@ jobs:
           chmod -R +x arch/arm64/kernel/vdso/ || true
           chmod +x scripts/config || true
           
-          # ---> THE GHOST-BUSTER FIX <---
-          # 1. Wipe any previous messy attempts from the Makefile
+          # ---> THE NUCLEAR LINKER FIX <---
+          # 1. Clean the Makefile of all previous attempts
           sed -i '/kernelsu/d' drivers/Makefile || true
           
-          # 2. Add it back using the cleanest possible syntax
-          echo 'obj-y += kernelsu/' >> drivers/Makefile
+          # 2. Force KernelSU to build as a proper object file in the driver list
+          # We use the explicit built-in.o path so the linker doesn't see a folder
+          echo 'obj-y += kernelsu/built-in.o' >> drivers/Makefile
           
           mkdir -p include/kernelsu
           ln -sf ${GITHUB_WORKSPACE}/drivers/kernelsu ${GITHUB_WORKSPACE}/include/kernelsu || true
