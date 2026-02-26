@@ -31,21 +31,12 @@ jobs:
           chmod -R +x arch/arm64/kernel/vdso/ || true
           chmod +x scripts/config || true
           
+          # Cleanly add KernelSU to the driver list without breaking the Linker
           if ! grep -q "kernelsu" drivers/Makefile; then
             echo 'obj-y += kernelsu/' >> drivers/Makefile
           fi
           
-          echo "ccflags-y += -I${GITHUB_WORKSPACE}/drivers/kernelsu" >> drivers/kernelsu/Kbuild
-          echo "ccflags-y += -I${GITHUB_WORKSPACE}/security/selinux" >> drivers/kernelsu/Kbuild
-          echo "ccflags-y += -I${GITHUB_WORKSPACE}/security/selinux/include" >> drivers/kernelsu/Kbuild
-          
-          echo "ccflags-y += -I${GITHUB_WORKSPACE}/drivers/kernelsu" >> drivers/kernelsu/Makefile
-          echo "ccflags-y += -I${GITHUB_WORKSPACE}/security/selinux" >> drivers/kernelsu/Makefile
-          echo "ccflags-y += -I${GITHUB_WORKSPACE}/security/selinux/include" >> drivers/kernelsu/Makefile
-          
-          echo "ccflags-y += -I${GITHUB_WORKSPACE}/drivers" >> drivers/input/Makefile || true
-          echo "ccflags-y += -I${GITHUB_WORKSPACE}/drivers" >> drivers/input/Kbuild || true
-          
+          # Use Kbuild's proper include method instead of forcing ccflags
           mkdir -p include/kernelsu
           ln -sf ${GITHUB_WORKSPACE}/drivers/kernelsu ${GITHUB_WORKSPACE}/include/kernelsu || true
 
@@ -62,66 +53,47 @@ jobs:
           mkdir -p drivers/input/touchscreen/focaltech_touch_spi/include/firmware
           touch drivers/input/touchscreen/focaltech_touch_spi/include/firmware/fw_sample.i || true
 
+          # Seccomp & Version Fixes
           sed -i 's/!!!current->seccomp.mode/0/g' drivers/kernelsu/app_profile.c || true
           sed -i 's/current->seccomp.mode = 0;/\/\/current->seccomp.mode = 0;/g' drivers/kernelsu/app_profile.c || true
           sed -i 's/current->seccomp.filter = NULL;/\/\/current->seccomp.filter = NULL;/g' drivers/kernelsu/app_profile.c || true
-          
           sed -i 's/#define KERNEL_SU_VERSION KSU_VERSION/#define KERNEL_SU_VERSION 11938/g' drivers/kernelsu/kernel/ksu.h || true
           sed -i 's/#define KERNEL_SU_VERSION_TAG KSU_VERSION_TAG/#define KERNEL_SU_VERSION_TAG "v1.0.0"/g' drivers/kernelsu/kernel/ksu.h || true
 
-          sed -i '1i #include <linux/types.h>' drivers/kernelsu/tiny_sulog.c || true
-          sed -i '1i #include <linux/kernel.h>' drivers/kernelsu/tiny_sulog.c || true
-          sed -i '1i #include <linux/spinlock.h>' drivers/kernelsu/tiny_sulog.c || true
-          sed -i '1i #include <linux/slab.h>' drivers/kernelsu/tiny_sulog.c || true
-          sed -i '1i #include <linux/ktime.h>' drivers/kernelsu/tiny_sulog.c || true
-          sed -i '1i #include <linux/cred.h>' drivers/kernelsu/tiny_sulog.c || true
-
-          sed -i 's/db = &policydb;/db = \&selinux_state.ss->policydb;/g' drivers/kernelsu/selinux/rules.c || true
+          # Tiny_sulog & SELinux Backport Fixes
+          sed -i '1i #include <linux/types.h>\n#include <linux/kernel.h>\n#include <linux/spinlock.h>\n#include <linux/slab.h>\n#include <linux/ktime.h>\n#include <linux/cred.h>' drivers/kernelsu/tiny_sulog.c || true
+          sed -i 's/db = \&policydb;/db = \&selinux_state.ss->policydb;/g' drivers/kernelsu/selinux/rules.c || true
           sed -i 's/selinux_status_update_policyload(0);/selinux_status_update_policyload(\&selinux_state, 0);/g' drivers/kernelsu/selinux/rules.c || true
           sed -i 's/selinux_status_update_policyload(seqno);/selinux_status_update_policyload(\&selinux_state, seqno);/g' drivers/kernelsu/selinux/rules.c || true
-
-          sed -i 's|"inc/tcpci.h"|"tcpci.h"|g' drivers/usb/typec/P86801_tcpc/inc/pd_dpm_pdo_select.h || true
-          
-          # ---> THE FINAL SELINUX TYPO FIX <---
           sed -i 's|../ksu.h|ksu.h|g' drivers/kernelsu/selinux/selinux.c || true
+
+          # USB-C Typo Fix
+          sed -i 's|"inc/tcpci.h"|"tcpci.h"|g' drivers/usb/typec/P86801_tcpc/inc/pd_dpm_pdo_select.h || true
 
       - name: ⚙️ Generate Kernel Configuration
         run: |
           export ARCH=arm64
           make ARCH=arm64 HOSTCC=gcc CC=gcc vendor/gta9pwifi_eur_open_defconfig
-          
           ./scripts/config --file .config --disable SECURITY_DEFEX
           ./scripts/config --file .config --disable SEC_RESTRICT_FORK
           ./scripts/config --file .config --enable KSU
           ./scripts/config --file .config --enable KSU_NEXT
           ./scripts/config --file .config --enable KSU_NEXT_MANUAL_HOOK
-          
           make ARCH=arm64 HOSTCC=gcc CC=gcc olddefconfig
 
-      - name: 🔨 Resolve SELinux Headers (The Enhanced Offline Bypass)
+      - name: 🔨 Resolve SELinux Headers
         run: |
           make ARCH=arm64 CC="clang --target=aarch64-linux-gnu" CROSS_COMPILE=aarch64-linux-gnu- HOSTCC=gcc CC_FOR_BUILD=gcc -j$(nproc --all) prepare
           mkdir -p security/selinux/include
-          
           wget -q https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/selinux/flask.h -O flask.h || true
           wget -q https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/selinux/av_permissions.h -O av_permissions.h || true
-          
-          echo '#ifndef SECINITSID_NUM' >> flask.h
-          echo '#define SECINITSID_NUM 27' >> flask.h
-          echo '#endif' >> flask.h
-          
-          echo '#ifndef CONFIG_SECURITY_SELINUX_SIDTAB_HASH_BITS' >> flask.h
-          echo '#define CONFIG_SECURITY_SELINUX_SIDTAB_HASH_BITS 9' >> flask.h
-          echo '#endif' >> flask.h
-          
+          echo -e "#ifndef SECINITSID_NUM\n#define SECINITSID_NUM 27\n#endif\n#ifndef CONFIG_SECURITY_SELINUX_SIDTAB_HASH_BITS\n#define CONFIG_SECURITY_SELINUX_SIDTAB_HASH_BITS 9\n#endif" >> flask.h
           cp flask.h security/selinux/include/flask.h || true
           cp av_permissions.h security/selinux/include/av_permissions.h || true
           cp flask.h drivers/kernelsu/ || true
           cp av_permissions.h drivers/kernelsu/ || true
-          cp flask.h drivers/kernelsu/kernel/ || true
-          cp av_permissions.h drivers/kernelsu/kernel/ || true
 
-      - name: 🔨 Compile Kernel (The Main Build)
+      - name: 🔨 Compile Kernel
         run: |
           make ARCH=arm64 \
           CC="clang --target=aarch64-linux-gnu" \
@@ -134,23 +106,18 @@ jobs:
           -j$(nproc --all) \
           KCFLAGS="-I${GITHUB_WORKSPACE}/drivers/kernelsu -I${GITHUB_WORKSPACE}/security/selinux -I${GITHUB_WORKSPACE}/security/selinux/include -I${GITHUB_WORKSPACE}/drivers -Wno-error=frame-larger-than= -Wno-implicit-function-declaration -Wno-strict-prototypes -Wno-int-conversion -Wno-enum-conversion"
 
-      - name: 📦 Package Output for Flashing
+      - name: 📦 Package Output
         run: |
           mkdir -p Final_Kernel
           cp arch/arm64/boot/Image Final_Kernel/ || true
           cd Final_Kernel
-          
-          # 1. Package the .tar file
           tar -cvf TabA9Plus-KSU-Kernel.tar Image || true
-          
-          # 2. Package the AnyKernel3 .zip file
           git clone https://github.com/osm0sis/AnyKernel3.git
           cd AnyKernel3
           sed -i 's/do.devicecheck=1/do.devicecheck=0/g' anykernel.sh
           sed -i 's/block=\/dev\/block\/bootdevice\/by-name\/boot;/block=auto;/g' anykernel.sh
           cp ../Image .
           zip -r9 ../TabA9Plus-KSU-AnyKernel3.zip * -x .git README.md *placeholder
-          cd ..
           
       - name: 📤 Upload Artifact
         uses: actions/upload-artifact@v4
