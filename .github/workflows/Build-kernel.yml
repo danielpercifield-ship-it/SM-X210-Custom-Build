@@ -74,6 +74,13 @@ jobs:
           sed -i 's/#define KERNEL_SU_VERSION KSU_VERSION/#define KERNEL_SU_VERSION 11938/g' drivers/kernelsu/kernel/ksu.h || true
           sed -i 's/#define KERNEL_SU_VERSION_TAG KSU_VERSION_TAG/#define KERNEL_SU_VERSION_TAG "v1.0.0"/g' drivers/kernelsu/kernel/ksu.h || true
 
+          sed -i '1i #include <linux/types.h>' drivers/kernelsu/tiny_sulog.c || true
+          sed -i '1i #include <linux/kernel.h>' drivers/kernelsu/tiny_sulog.c || true
+          sed -i '1i #include <linux/spinlock.h>' drivers/kernelsu/tiny_sulog.c || true
+          sed -i '1i #include <linux/slab.h>' drivers/kernelsu/tiny_sulog.c || true
+          sed -i '1i #include <linux/ktime.h>' drivers/kernelsu/tiny_sulog.c || true
+          sed -i '1i #include <linux/cred.h>' drivers/kernelsu/tiny_sulog.c || true
+
       - name: ⚙️ Generate Kernel Configuration
         run: |
           export ARCH=arm64
