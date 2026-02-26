@@ -39,13 +39,18 @@ jobs:
           chmod -R +x arch/arm64/kernel/vdso/ || true
           chmod +x scripts/config || true
           
-          # ---> THE NUCLEAR LINKER FIX <---
-          # 1. Clean the Makefile of all previous attempts
+          # 1. Clean the main drivers Makefile
           sed -i '/kernelsu/d' drivers/Makefile || true
           
-          # 2. Force KernelSU to build as a proper object file in the driver list
-          # We use the explicit built-in.o path so the linker doesn't see a folder
-          echo 'obj-y += kernelsu/built-in.o' >> drivers/Makefile
+          # 2. Revert to the standard directory inclusion (it is the safest way)
+          echo 'obj-y += kernelsu/' >> drivers/Makefile
+          
+          # 3. FIX: Force KernelSU's internal Makefile to produce a built-in object
+          # This ensures the linker sees a file it can actually open.
+          if [ -f drivers/kernelsu/Makefile ]; then
+            sed -i 's/obj-y +=/obj-y :=/g' drivers/kernelsu/Makefile || true
+            echo "obj-y += kernel/" >> drivers/kernelsu/Makefile || true
+          fi
           
           mkdir -p include/kernelsu
           ln -sf ${GITHUB_WORKSPACE}/drivers/kernelsu ${GITHUB_WORKSPACE}/include/kernelsu || true
@@ -111,7 +116,6 @@ jobs:
           export CCACHE_EXEC=$(which ccache)
           ccache -M 5G
           
-          # FULL LLVM SUITE FOR LTO COMPATIBILITY
           make ARCH=arm64 \
           CC="ccache clang --target=aarch64-linux-gnu" \
           REAL_CC="ccache clang --target=aarch64-linux-gnu" \
@@ -126,8 +130,9 @@ jobs:
           CC_FOR_BUILD="ccache gcc" \
           CLANG_TRIPLE=aarch64-linux-gnu- \
           -j$(nproc --all) \
-          KCFLAGS="-I${GITHUB_WORKSPACE}/drivers/kernelsu -I${GITHUB_WORKSPACE}/security/selinux -I${GITHUB_WORKSPACE}/security/selinux/include -I${GITHUB_WORKSPACE}/drivers -Wno-error=frame-larger-than= -Wno-implicit-function-declaration -Wno-strict-prototypes -Wno-int-conversion -Wno-enum-conversion"
-          
+          KCFLAGS="-I${GITHUB_WORKSPACE}/drivers/kernelsu -I${GITHUB_WORKSPACE}/security/selinux -I${GITHUB_WORKSPACE}/security/selinux/include -I${GITHUB_WORKSPACE}/drivers -Wno-error=frame-larger-than= -Wno-implicit-function-declaration -Wno-strict-prototypes -Wno-int-conversion -Wno-enum-conversion" \
+          KBUILD_VMLINUX_LIBS="drivers/kernelsu/built-in.a"
+     
           ccache -s
 
       - name: 📦 Package Output
