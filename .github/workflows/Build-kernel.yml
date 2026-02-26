@@ -22,7 +22,15 @@ jobs:
         run: |
           export DEBIAN_FRONTEND=noninteractive
           apt-get update
-          apt-get install -y bc build-essential flex bison libssl-dev libelf-dev clang llvm lld gcc-aarch64-linux-gnu tar zip wget python3 cpio xz-utils
+          apt-get install -y bc build-essential flex bison libssl-dev libelf-dev clang llvm lld gcc-aarch64-linux-gnu tar zip wget python3 cpio xz-utils ccache
+
+      - name: 🗄️ Restore Compiler Cache
+        uses: actions/cache@v4
+        with:
+          path: .ccache
+          key: ksu-ccache-${{ github.run_id }}
+          restore-keys: |
+            ksu-ccache-
 
       - name: 📁 Setup & Permissions
         run: |
@@ -31,12 +39,10 @@ jobs:
           chmod -R +x arch/arm64/kernel/vdso/ || true
           chmod +x scripts/config || true
           
-          # Cleanly add KernelSU to the driver list without breaking the Linker
           if ! grep -q "kernelsu" drivers/Makefile; then
             echo 'obj-y += kernelsu/' >> drivers/Makefile
           fi
           
-          # Use Kbuild's proper include method instead of forcing ccflags
           mkdir -p include/kernelsu
           ln -sf ${GITHUB_WORKSPACE}/drivers/kernelsu ${GITHUB_WORKSPACE}/include/kernelsu || true
 
@@ -53,21 +59,17 @@ jobs:
           mkdir -p drivers/input/touchscreen/focaltech_touch_spi/include/firmware
           touch drivers/input/touchscreen/focaltech_touch_spi/include/firmware/fw_sample.i || true
 
-          # Seccomp & Version Fixes
           sed -i 's/!!!current->seccomp.mode/0/g' drivers/kernelsu/app_profile.c || true
           sed -i 's/current->seccomp.mode = 0;/\/\/current->seccomp.mode = 0;/g' drivers/kernelsu/app_profile.c || true
           sed -i 's/current->seccomp.filter = NULL;/\/\/current->seccomp.filter = NULL;/g' drivers/kernelsu/app_profile.c || true
           sed -i 's/#define KERNEL_SU_VERSION KSU_VERSION/#define KERNEL_SU_VERSION 11938/g' drivers/kernelsu/kernel/ksu.h || true
           sed -i 's/#define KERNEL_SU_VERSION_TAG KSU_VERSION_TAG/#define KERNEL_SU_VERSION_TAG "v1.0.0"/g' drivers/kernelsu/kernel/ksu.h || true
 
-          # Tiny_sulog & SELinux Backport Fixes
           sed -i '1i #include <linux/types.h>\n#include <linux/kernel.h>\n#include <linux/spinlock.h>\n#include <linux/slab.h>\n#include <linux/ktime.h>\n#include <linux/cred.h>' drivers/kernelsu/tiny_sulog.c || true
           sed -i 's/db = \&policydb;/db = \&selinux_state.ss->policydb;/g' drivers/kernelsu/selinux/rules.c || true
           sed -i 's/selinux_status_update_policyload(0);/selinux_status_update_policyload(\&selinux_state, 0);/g' drivers/kernelsu/selinux/rules.c || true
           sed -i 's/selinux_status_update_policyload(seqno);/selinux_status_update_policyload(\&selinux_state, seqno);/g' drivers/kernelsu/selinux/rules.c || true
           sed -i 's|../ksu.h|ksu.h|g' drivers/kernelsu/selinux/selinux.c || true
-
-          # USB-C Typo Fix
           sed -i 's|"inc/tcpci.h"|"tcpci.h"|g' drivers/usb/typec/P86801_tcpc/inc/pd_dpm_pdo_select.h || true
 
       - name: ⚙️ Generate Kernel Configuration
@@ -87,7 +89,15 @@ jobs:
           mkdir -p security/selinux/include
           wget -q https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/selinux/flask.h -O flask.h || true
           wget -q https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/selinux/av_permissions.h -O av_permissions.h || true
-          echo -e "#ifndef SECINITSID_NUM\n#define SECINITSID_NUM 27\n#endif\n#ifndef CONFIG_SECURITY_SELINUX_SIDTAB_HASH_BITS\n#define CONFIG_SECURITY_SELINUX_SIDTAB_HASH_BITS 9\n#endif" >> flask.h
+          
+          # ---> THE ECHO FIX: Reverted to bulletproof POSIX lines <---
+          echo '#ifndef SECINITSID_NUM' >> flask.h
+          echo '#define SECINITSID_NUM 27' >> flask.h
+          echo '#endif' >> flask.h
+          echo '#ifndef CONFIG_SECURITY_SELINUX_SIDTAB_HASH_BITS' >> flask.h
+          echo '#define CONFIG_SECURITY_SELINUX_SIDTAB_HASH_BITS 9' >> flask.h
+          echo '#endif' >> flask.h
+          
           cp flask.h security/selinux/include/flask.h || true
           cp av_permissions.h security/selinux/include/av_permissions.h || true
           cp flask.h drivers/kernelsu/ || true
@@ -95,16 +105,22 @@ jobs:
 
       - name: 🔨 Compile Kernel
         run: |
+          export CCACHE_DIR=$GITHUB_WORKSPACE/.ccache
+          export CCACHE_EXEC=$(which ccache)
+          ccache -M 5G
+          
           make ARCH=arm64 \
-          CC="clang --target=aarch64-linux-gnu" \
-          REAL_CC="clang --target=aarch64-linux-gnu" \
+          CC="ccache clang --target=aarch64-linux-gnu" \
+          REAL_CC="ccache clang --target=aarch64-linux-gnu" \
           CROSS_COMPILE=aarch64-linux-gnu- \
           LD=ld.lld \
-          HOSTCC=gcc \
-          CC_FOR_BUILD=gcc \
+          HOSTCC="ccache gcc" \
+          CC_FOR_BUILD="ccache gcc" \
           CLANG_TRIPLE=aarch64-linux-gnu- \
           -j$(nproc --all) \
           KCFLAGS="-I${GITHUB_WORKSPACE}/drivers/kernelsu -I${GITHUB_WORKSPACE}/security/selinux -I${GITHUB_WORKSPACE}/security/selinux/include -I${GITHUB_WORKSPACE}/drivers -Wno-error=frame-larger-than= -Wno-implicit-function-declaration -Wno-strict-prototypes -Wno-int-conversion -Wno-enum-conversion"
+          
+          ccache -s
 
       - name: 📦 Package Output
         run: |
@@ -126,4 +142,3 @@ jobs:
           path: |
             Final_Kernel/TabA9Plus-KSU-Kernel.tar
             Final_Kernel/TabA9Plus-KSU-AnyKernel3.zip
-
