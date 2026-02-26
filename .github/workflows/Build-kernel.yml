@@ -81,6 +81,10 @@ jobs:
           sed -i '1i #include <linux/ktime.h>' drivers/kernelsu/tiny_sulog.c || true
           sed -i '1i #include <linux/cred.h>' drivers/kernelsu/tiny_sulog.c || true
 
+          sed -i 's/db = &policydb;/db = \&selinux_state.ss->policydb;/g' drivers/kernelsu/selinux/rules.c || true
+          sed -i 's/selinux_status_update_policyload(0);/selinux_status_update_policyload(\&selinux_state, 0);/g' drivers/kernelsu/selinux/rules.c || true
+          sed -i 's/selinux_status_update_policyload(seqno);/selinux_status_update_policyload(\&selinux_state, seqno);/g' drivers/kernelsu/selinux/rules.c || true
+
       - name: ⚙️ Generate Kernel Configuration
         run: |
           export ARCH=arm64
