@@ -39,21 +39,12 @@ jobs:
           chmod -R +x arch/arm64/kernel/vdso/ || true
           chmod +x scripts/config || true
           
-          # 1. Clean out all previous failed attempts from the main Makefile
-          sed -i '/kernelsu/d' drivers/Makefile || true
-          
-          # 2. Add KernelSU to the drivers list as a DIRECT OBJECT
-          # This bypasses the directory-linking logic that is causing the crash
-          echo 'obj-y += kernelsu/built-in.o' >> drivers/Makefile
-          
-          # 3. Force KernelSU's internal Makefile to produce a single built-in.o
-          if [ -d drivers/kernelsu ]; then
-            echo "obj-y := kernel/" > drivers/kernelsu/Makefile
+          if ! grep -q "kernelsu" drivers/Makefile; then
+            echo 'obj-y += kernelsu/' >> drivers/Makefile
           fi
           
           mkdir -p include/kernelsu
           ln -sf ${GITHUB_WORKSPACE}/drivers/kernelsu ${GITHUB_WORKSPACE}/include/kernelsu || true
-
 
       - name: 🩹 Apply Deep Source Code Fixes
         run: |
@@ -71,7 +62,6 @@ jobs:
           sed -i 's/!!!current->seccomp.mode/0/g' drivers/kernelsu/app_profile.c || true
           sed -i 's/current->seccomp.mode = 0;/\/\/current->seccomp.mode = 0;/g' drivers/kernelsu/app_profile.c || true
           sed -i 's/current->seccomp.filter = NULL;/\/\/current->seccomp.filter = NULL;/g' drivers/kernelsu/app_profile.c || true
-          
           sed -i 's/#define KERNEL_SU_VERSION KSU_VERSION/#define KERNEL_SU_VERSION 11938/g' drivers/kernelsu/kernel/ksu.h || true
           sed -i 's/#define KERNEL_SU_VERSION_TAG KSU_VERSION_TAG/#define KERNEL_SU_VERSION_TAG "v1.0.0"/g' drivers/kernelsu/kernel/ksu.h || true
 
@@ -99,12 +89,15 @@ jobs:
           mkdir -p security/selinux/include
           wget -q https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/selinux/flask.h -O flask.h || true
           wget -q https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/selinux/av_permissions.h -O av_permissions.h || true
+          
+          # ---> THE ECHO FIX: Reverted to bulletproof POSIX lines <---
           echo '#ifndef SECINITSID_NUM' >> flask.h
           echo '#define SECINITSID_NUM 27' >> flask.h
           echo '#endif' >> flask.h
           echo '#ifndef CONFIG_SECURITY_SELINUX_SIDTAB_HASH_BITS' >> flask.h
           echo '#define CONFIG_SECURITY_SELINUX_SIDTAB_HASH_BITS 9' >> flask.h
           echo '#endif' >> flask.h
+          
           cp flask.h security/selinux/include/flask.h || true
           cp av_permissions.h security/selinux/include/av_permissions.h || true
           cp flask.h drivers/kernelsu/ || true
@@ -116,31 +109,23 @@ jobs:
           export CCACHE_EXEC=$(which ccache)
           ccache -M 5G
           
-          # We manually strip the folder path from the linker's list
           make ARCH=arm64 \
           CC="ccache clang --target=aarch64-linux-gnu" \
           REAL_CC="ccache clang --target=aarch64-linux-gnu" \
-          LD=ld.lld \
-          AR=llvm-ar \
-          NM=llvm-nm \
-          OBJCOPY=llvm-objcopy \
-          OBJDUMP=llvm-objdump \
-          STRIP=llvm-strip \
           CROSS_COMPILE=aarch64-linux-gnu- \
+          LD=ld.lld \
           HOSTCC="ccache gcc" \
           CC_FOR_BUILD="ccache gcc" \
           CLANG_TRIPLE=aarch64-linux-gnu- \
           -j$(nproc --all) \
-          KCFLAGS="-I${GITHUB_WORKSPACE}/drivers/kernelsu -I${GITHUB_WORKSPACE}/security/selinux -I${GITHUB_WORKSPACE}/security/selinux/include -I${GITHUB_WORKSPACE}/drivers -Wno-error=frame-larger-than= -Wno-implicit-function-declaration -Wno-strict-prototypes -Wno-int-conversion -Wno-enum-conversion" \
-          KBUILD_VMLINUX_INIT="drivers/kernelsu/built-in.o"
+          KCFLAGS="-I${GITHUB_WORKSPACE}/drivers/kernelsu -I${GITHUB_WORKSPACE}/security/selinux -I${GITHUB_WORKSPACE}/security/selinux/include -I${GITHUB_WORKSPACE}/drivers -Wno-error=frame-larger-than= -Wno-implicit-function-declaration -Wno-strict-prototypes -Wno-int-conversion -Wno-enum-conversion"
           
           ccache -s
 
       - name: 📦 Package Output
         run: |
           mkdir -p Final_Kernel
-          # Use 'find' to grab the Image regardless of subfolder
-          find arch/arm64/boot/ -name "Image" -exec cp {} Final_Kernel/ \; || true
+          cp arch/arm64/boot/Image Final_Kernel/ || true
           cd Final_Kernel
           tar -cvf TabA9Plus-KSU-Kernel.tar Image || true
           git clone https://github.com/osm0sis/AnyKernel3.git
