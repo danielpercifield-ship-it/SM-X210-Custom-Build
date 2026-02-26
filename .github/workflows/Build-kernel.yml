@@ -90,7 +90,6 @@ jobs:
           wget -q https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/selinux/flask.h -O flask.h || true
           wget -q https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/selinux/av_permissions.h -O av_permissions.h || true
           
-          # ---> THE ECHO FIX: Reverted to bulletproof POSIX lines <---
           echo '#ifndef SECINITSID_NUM' >> flask.h
           echo '#define SECINITSID_NUM 27' >> flask.h
           echo '#endif' >> flask.h
@@ -109,11 +108,11 @@ jobs:
           export CCACHE_EXEC=$(which ccache)
           ccache -M 5G
           
+          # ---> THE LINKER FIX: Removed LD=ld.lld to force the GNU Linker fallback <---
           make ARCH=arm64 \
           CC="ccache clang --target=aarch64-linux-gnu" \
           REAL_CC="ccache clang --target=aarch64-linux-gnu" \
           CROSS_COMPILE=aarch64-linux-gnu- \
-          LD=ld.lld \
           HOSTCC="ccache gcc" \
           CC_FOR_BUILD="ccache gcc" \
           CLANG_TRIPLE=aarch64-linux-gnu- \
@@ -142,3 +141,4 @@ jobs:
           path: |
             Final_Kernel/TabA9Plus-KSU-Kernel.tar
             Final_Kernel/TabA9Plus-KSU-AnyKernel3.zip
+
