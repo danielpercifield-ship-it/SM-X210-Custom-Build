@@ -39,9 +39,12 @@ jobs:
           chmod -R +x arch/arm64/kernel/vdso/ || true
           chmod +x scripts/config || true
           
-          if ! grep -q "kernelsu" drivers/Makefile; then
-            echo 'obj-y += kernelsu/' >> drivers/Makefile
-          fi
+          # 1. Clean out all previous failed attempts from the main Makefile
+          sed -i '/kernelsu/d' drivers/Makefile || true
+          
+          # 2. Force KernelSU to be seen as a CORE library component
+          # This tells the linker: "Don't open the folder, look for the archive inside"
+          echo 'core-y += drivers/kernelsu/' >> Makefile
           
           mkdir -p include/kernelsu
           ln -sf ${GITHUB_WORKSPACE}/drivers/kernelsu ${GITHUB_WORKSPACE}/include/kernelsu || true
@@ -112,8 +115,13 @@ jobs:
           make ARCH=arm64 \
           CC="ccache clang --target=aarch64-linux-gnu" \
           REAL_CC="ccache clang --target=aarch64-linux-gnu" \
-          CROSS_COMPILE=aarch64-linux-gnu- \
           LD=ld.lld \
+          AR=llvm-ar \
+          NM=llvm-nm \
+          OBJCOPY=llvm-objcopy \
+          OBJDUMP=llvm-objdump \
+          STRIP=llvm-strip \
+          CROSS_COMPILE=aarch64-linux-gnu- \
           HOSTCC="ccache gcc" \
           CC_FOR_BUILD="ccache gcc" \
           CLANG_TRIPLE=aarch64-linux-gnu- \
