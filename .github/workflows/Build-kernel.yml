@@ -39,8 +39,9 @@ jobs:
           chmod -R +x arch/arm64/kernel/vdso/ || true
           chmod +x scripts/config || true
           
-          if ! grep -q "kernelsu" drivers/Makefile; then
-            echo 'obj-y += kernelsu/' >> drivers/Makefile
+          # POINT TO THE OBJECT, NOT THE FOLDER
+          if ! grep -q "kernelsu/built-in.a" drivers/Makefile; then
+            echo 'obj-y += kernelsu/built-in.a' >> drivers/Makefile
           fi
           
           mkdir -p include/kernelsu
@@ -62,6 +63,7 @@ jobs:
           sed -i 's/!!!current->seccomp.mode/0/g' drivers/kernelsu/app_profile.c || true
           sed -i 's/current->seccomp.mode = 0;/\/\/current->seccomp.mode = 0;/g' drivers/kernelsu/app_profile.c || true
           sed -i 's/current->seccomp.filter = NULL;/\/\/current->seccomp.filter = NULL;/g' drivers/kernelsu/app_profile.c || true
+          
           sed -i 's/#define KERNEL_SU_VERSION KSU_VERSION/#define KERNEL_SU_VERSION 11938/g' drivers/kernelsu/kernel/ksu.h || true
           sed -i 's/#define KERNEL_SU_VERSION_TAG KSU_VERSION_TAG/#define KERNEL_SU_VERSION_TAG "v1.0.0"/g' drivers/kernelsu/kernel/ksu.h || true
 
@@ -89,14 +91,12 @@ jobs:
           mkdir -p security/selinux/include
           wget -q https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/selinux/flask.h -O flask.h || true
           wget -q https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/selinux/av_permissions.h -O av_permissions.h || true
-          
           echo '#ifndef SECINITSID_NUM' >> flask.h
           echo '#define SECINITSID_NUM 27' >> flask.h
           echo '#endif' >> flask.h
           echo '#ifndef CONFIG_SECURITY_SELINUX_SIDTAB_HASH_BITS' >> flask.h
           echo '#define CONFIG_SECURITY_SELINUX_SIDTAB_HASH_BITS 9' >> flask.h
           echo '#endif' >> flask.h
-          
           cp flask.h security/selinux/include/flask.h || true
           cp av_permissions.h security/selinux/include/av_permissions.h || true
           cp flask.h drivers/kernelsu/ || true
@@ -108,7 +108,7 @@ jobs:
           export CCACHE_EXEC=$(which ccache)
           ccache -M 5G
           
-          # ---> THE LINKER FIX: Removed LD=ld.lld to force the GNU Linker fallback <---
+          # FULL LLVM SUITE FOR LTO COMPATIBILITY
           make ARCH=arm64 \
           CC="ccache clang --target=aarch64-linux-gnu" \
           REAL_CC="ccache clang --target=aarch64-linux-gnu" \
@@ -130,7 +130,8 @@ jobs:
       - name: 📦 Package Output
         run: |
           mkdir -p Final_Kernel
-          cp arch/arm64/boot/Image Final_Kernel/ || true
+          # Use 'find' to grab the Image regardless of subfolder
+          find arch/arm64/boot/ -name "Image" -exec cp {} Final_Kernel/ \; || true
           cd Final_Kernel
           tar -cvf TabA9Plus-KSU-Kernel.tar Image || true
           git clone https://github.com/osm0sis/AnyKernel3.git
@@ -147,4 +148,3 @@ jobs:
           path: |
             Final_Kernel/TabA9Plus-KSU-Kernel.tar
             Final_Kernel/TabA9Plus-KSU-AnyKernel3.zip
-
