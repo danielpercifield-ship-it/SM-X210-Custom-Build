@@ -22,12 +22,10 @@ jobs:
         run: |
           export DEBIAN_FRONTEND=noninteractive
           apt-get update
-          # Added cpio and xz-utils to fix the kheaders Error 127
           apt-get install -y bc build-essential flex bison libssl-dev libelf-dev clang llvm lld gcc-aarch64-linux-gnu tar zip wget python3 cpio xz-utils
 
       - name: 📁 Setup & Permissions
         run: |
-          # Brute-force unlock ALL scripts to fix the VDSO permission denied error
           find . -type f -name "*.sh" -exec chmod +x {} + || true
           chmod -R +x scripts/ || true
           chmod -R +x arch/arm64/kernel/vdso/ || true
@@ -58,10 +56,7 @@ jobs:
           ln -sf $(pwd)/arch/arm64/include/asm $(pwd)/include/asm || true
           sed -i 's|#define TRACE_INCLUDE_PATH .|#define TRACE_INCLUDE_PATH ../../kernel/sched/walt|g' kernel/sched/walt/trace.h || true
           
-          # Fix for KernelSU current_sid redefinition clash
           sed -i 's/static inline u32 current_sid(void)/static inline u32 ksu_current_sid_dummy(void)/g' drivers/kernelsu/selinux/selinux.h || true
-          
-          # Fix for VDSO Paradox (Deletes redundant extern declarations)
           sed -i '/extern unsigned long vdso_offset_/d' arch/arm64/include/asm/vdso.h || true
           
           mkdir -p drivers/input/touchscreen/focaltech_touch_spi/include/firmware
@@ -70,7 +65,7 @@ jobs:
           sed -i 's/!!!current->seccomp.mode/0/g' drivers/kernelsu/app_profile.c || true
           sed -i 's/current->seccomp.mode = 0;/\/\/current->seccomp.mode = 0;/g' drivers/kernelsu/app_profile.c || true
           sed -i 's/current->seccomp.filter = NULL;/\/\/current->seccomp.filter = NULL;/g' drivers/kernelsu/app_profile.c || true
-
+          
           sed -i 's/#define KERNEL_SU_VERSION KSU_VERSION/#define KERNEL_SU_VERSION 11938/g' drivers/kernelsu/kernel/ksu.h || true
           sed -i 's/#define KERNEL_SU_VERSION_TAG KSU_VERSION_TAG/#define KERNEL_SU_VERSION_TAG "v1.0.0"/g' drivers/kernelsu/kernel/ksu.h || true
 
@@ -84,6 +79,9 @@ jobs:
           sed -i 's/db = &policydb;/db = \&selinux_state.ss->policydb;/g' drivers/kernelsu/selinux/rules.c || true
           sed -i 's/selinux_status_update_policyload(0);/selinux_status_update_policyload(\&selinux_state, 0);/g' drivers/kernelsu/selinux/rules.c || true
           sed -i 's/selinux_status_update_policyload(seqno);/selinux_status_update_policyload(\&selinux_state, seqno);/g' drivers/kernelsu/selinux/rules.c || true
+          
+          # ---> THE FINAL SELINUX TYPO FIX <---
+          sed -i 's|../ksu.h|ksu.h|g' drivers/kernelsu/selinux/selinux.c || true
 
       - name: ⚙️ Generate Kernel Configuration
         run: |
@@ -103,11 +101,9 @@ jobs:
           make ARCH=arm64 CC="clang --target=aarch64-linux-gnu" CROSS_COMPILE=aarch64-linux-gnu- HOSTCC=gcc CC_FOR_BUILD=gcc -j$(nproc --all) prepare
           mkdir -p security/selinux/include
           
-          echo "Fetching KernelSU's dummy SELinux headers..."
           wget -q https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/selinux/flask.h -O flask.h || true
           wget -q https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/selinux/av_permissions.h -O av_permissions.h || true
           
-          echo "Injecting Samsung Knox variables directly into the dummy flask.h to satisfy sidtab.h..."
           echo '#ifndef SECINITSID_NUM' >> flask.h
           echo '#define SECINITSID_NUM 27' >> flask.h
           echo '#endif' >> flask.h
@@ -116,7 +112,6 @@ jobs:
           echo '#define CONFIG_SECURITY_SELINUX_SIDTAB_HASH_BITS 9' >> flask.h
           echo '#endif' >> flask.h
           
-          echo "Deploying the fully armed headers..."
           cp flask.h security/selinux/include/flask.h || true
           cp av_permissions.h security/selinux/include/av_permissions.h || true
           cp flask.h drivers/kernelsu/ || true
@@ -142,10 +137,24 @@ jobs:
           mkdir -p Final_Kernel
           cp arch/arm64/boot/Image Final_Kernel/ || true
           cd Final_Kernel
+          
+          # 1. Package the .tar file
           tar -cvf TabA9Plus-KSU-Kernel.tar Image || true
+          
+          # 2. Package the AnyKernel3 .zip file
+          git clone https://github.com/osm0sis/AnyKernel3.git
+          cd AnyKernel3
+          sed -i 's/do.devicecheck=1/do.devicecheck=0/g' anykernel.sh
+          sed -i 's/block=\/dev\/block\/bootdevice\/by-name\/boot;/block=auto;/g' anykernel.sh
+          cp ../Image .
+          zip -r9 ../TabA9Plus-KSU-AnyKernel3.zip * -x .git README.md *placeholder
+          cd ..
           
       - name: 📤 Upload Artifact
         uses: actions/upload-artifact@v4
         with:
           name: TabA9Plus-KSU-Kernel
-          path: Final_Kernel/TabA9Plus-KSU-Kernel.tar
+          path: |
+            Final_Kernel/TabA9Plus-KSU-Kernel.tar
+            Final_Kernel/TabA9Plus-KSU-AnyKernel3.zip
+
