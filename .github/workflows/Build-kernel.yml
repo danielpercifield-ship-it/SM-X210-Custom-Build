@@ -79,6 +79,8 @@ jobs:
           sed -i 's/db = &policydb;/db = \&selinux_state.ss->policydb;/g' drivers/kernelsu/selinux/rules.c || true
           sed -i 's/selinux_status_update_policyload(0);/selinux_status_update_policyload(\&selinux_state, 0);/g' drivers/kernelsu/selinux/rules.c || true
           sed -i 's/selinux_status_update_policyload(seqno);/selinux_status_update_policyload(\&selinux_state, seqno);/g' drivers/kernelsu/selinux/rules.c || true
+
+          sed -i 's|"inc/tcpci.h"|"tcpci.h"|g' drivers/usb/typec/P86801_tcpc/inc/pd_dpm_pdo_select.h || true
           
           # ---> THE FINAL SELINUX TYPO FIX <---
           sed -i 's|../ksu.h|ksu.h|g' drivers/kernelsu/selinux/selinux.c || true
