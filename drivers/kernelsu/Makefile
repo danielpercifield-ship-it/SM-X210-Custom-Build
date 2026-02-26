@@ -1,28 +1,13 @@
 # 1. Objects to build
-obj-y += kernel/ksu.o
-obj-y += allowlist.o
-obj-y += apk_sign.o
-obj-y += app_profile.o
-obj-y += extras.o
-obj-y += feature.o
-obj-y += file_wrapper.o
-obj-y += kernel_compat.o
-obj-y += kernel_umount.o
-obj-y += ksud.o
-obj-y += lsm_hooks.o
-obj-y += seccomp_cache.o
-obj-y += setuid_hook.o
-obj-y += su_mount_ns.o
-obj-y += sucompat.o
-obj-y += supercalls.o
-obj-y += throne_tracker.o
-obj-y += tiny_sulog.o
-obj-y += util.o
+obj-y := kernel/ksu.o allowlist.o apk_sign.o app_profile.o extras.o \
+         feature.o file_wrapper.o kernel_compat.o kernel_umount.o \
+         ksud.o lsm_hooks.o seccomp_cache.o setuid_hook.o \
+         su_mount_ns.o sucompat.o supercalls.o throne_tracker.o \
+         tiny_sulog.o util.o
 
-# Build the selinux files from the subfolder
-obj-y += selinux/rules.o
-obj-y += selinux/selinux.o
-obj-y += selinux/sepolicy.o
+# Recursive build for the selinux folder
+obj-y += selinux/
+
 
 # 2. Fix the flask.h and include paths
 # This tells the compiler where to find the kernel's own SELinux headers
