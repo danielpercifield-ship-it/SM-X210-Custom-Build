@@ -67,6 +67,10 @@ jobs:
           mkdir -p drivers/input/touchscreen/focaltech_touch_spi/include/firmware
           touch drivers/input/touchscreen/focaltech_touch_spi/include/firmware/fw_sample.i || true
 
+          sed -i 's/!!!current->seccomp.mode/0/g' drivers/kernelsu/app_profile.c || true
+          sed -i 's/current->seccomp.mode = 0;/\/\/current->seccomp.mode = 0;/g' drivers/kernelsu/app_profile.c || true
+          sed -i 's/current->seccomp.filter = NULL;/\/\/current->seccomp.filter = NULL;/g' drivers/kernelsu/app_profile.c || true
+
       - name: ⚙️ Generate Kernel Configuration
         run: |
           export ARCH=arm64
