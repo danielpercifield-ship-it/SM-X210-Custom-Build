@@ -31,9 +31,9 @@ jobs:
           chmod -R +x arch/arm64/kernel/vdso/ || true
           chmod +x scripts/config || true
           
-          if ! grep -q "kernelsu" drivers/Makefile; then
-            echo 'obj-y += kernelsu/' >> drivers/Makefile
-          fi
+          # Clean slate: Guarantee KSU is only added to drivers/Makefile EXACTLY once
+          sed -i '/kernelsu/d' drivers/Makefile || true
+          echo 'obj-y += kernelsu/' >> drivers/Makefile
           
           mkdir -p include/kernelsu
           ln -sf ${GITHUB_WORKSPACE}/drivers/kernelsu ${GITHUB_WORKSPACE}/include/kernelsu || true
@@ -62,7 +62,6 @@ jobs:
           sed -i 's|#include "../ksu.h"|#include "../kernel/ksu.h"|g' drivers/kernelsu/selinux/selinux.c || true
           sed -i 's|#include "../kernksu.h"|#include "../kernel/ksu.h"|g' drivers/kernelsu/selinux/selinux.c || true
           sed -i 's|#include "ksu.h"|#include "../kernel/ksu.h"|g' drivers/kernelsu/selinux/selinux.c || true
-          
           sed -i 's|"inc/tcpci.h"|"tcpci.h"|g' drivers/usb/typec/P86801_tcpc/inc/pd_dpm_pdo_select.h || true
 
           # Restore rules.c SELinux struct fixes
@@ -73,13 +72,13 @@ jobs:
           # Inject missing headers into tiny_sulog.c
           sed -i '1i #include <linux/types.h>\n#include <linux/kernel.h>\n#include <linux/spinlock.h>\n#include <linux/slab.h>\n#include <linux/ktime.h>\n#include <linux/cred.h>' drivers/kernelsu/tiny_sulog.c || true
 
-          # === NEW LINKER FIXES ===
-          # Stop tiny_sulog from double-compiling and causing "multiple definition" errors
+          # === NEW LINKER FIXES (DOUBLE LINKING RESOLUTION) ===
+          # 1. Remove tiny_sulog.o from the Makefile so it doesn't clash with supercalls.o
           sed -i 's/tiny_sulog.o//g' drivers/kernelsu/Makefile || true
           
-          # Strip stray quotation marks from Makefile paths that cause "cannot find drivers/kernelsu/"
-          sed -i 's|"drivers/kernelsu/"|drivers/kernelsu/|g' Makefile || true
-          sed -i 's|"drivers/kernelsu"|drivers/kernelsu|g' Makefile || true
+          # 2. Forcefully scrub any stray KSU strings from the root Makefile
+          sed -i 's|drivers/kernelsu/||g' Makefile || true
+          sed -i 's|"drivers/kernelsu/"||g' Makefile || true
 
       - name: ⚙️ Generate Kernel Configuration
         run: |
@@ -139,3 +138,31 @@ jobs:
           CLANG_TRIPLE=aarch64-linux-gnu- \
           -j$(nproc --all) \
           KCFLAGS="-I${GITHUB_WORKSPACE}/drivers/kernelsu -I${GITHUB_WORKSPACE}/security/selinux -I${GITHUB_WORKSPACE}/security/selinux/include -I${GITHUB_WORKSPACE}/drivers -Wno-error=frame-larger-than= -Wno-implicit-function-declaration -Wno-strict-prototypes -Wno-int-conversion -Wno-enum-conversion -Wno-implicit-int -Wno-error=implicit-int -Wno-unused-but-set-variable -Wno-error=unused-but-set-variable" \
+          Image
+          
+          ccache -s
+
+      - name: 📦 Package Output
+        run: |
+          mkdir -p Final_Kernel
+          cp arch/arm64/boot/Image Final_Kernel/ || true
+          cd Final_Kernel
+          
+          # Create Odin Tarball
+          tar -cvf TabA9Plus-KSU-Kernel.tar Image || true
+          
+          # Create Flashable Zip using AnyKernel3
+          git clone https://github.com/osm0sis/AnyKernel3.git
+          cd AnyKernel3
+          sed -i 's/do.devicecheck=1/do.devicecheck=0/g' anykernel.sh
+          sed -i 's/block=\/dev\/block\/bootdevice\/by-name\/boot;/block=auto;/g' anykernel.sh
+          cp ../Image .
+          zip -r9 ../TabA9Plus-KSU-AnyKernel3.zip * -x .git README.md *placeholder
+          
+      - name: 📤 Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: TabA9Plus-KSU-Kernel
+          path: |
+            Final_Kernel/TabA9Plus-KSU-Kernel.tar
+            Final_Kernel/TabA9Plus-KSU-AnyKernel3.zip
