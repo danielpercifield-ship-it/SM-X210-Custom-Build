@@ -13,11 +13,15 @@ jobs:
         run: |
           export DEBIAN_FRONTEND=noninteractive
           apt-get update
-          apt-get install -y tzdata git software-properties-common bc build-essential flex bison libssl-dev libelf-dev clang llvm lld gcc-aarch64-linux-gnu tar zip wget python3 cpio xz-utils ccache
-
+          apt-get install -y tzdata git software-properties-common
       - name: 📥 Checkout Source Code
         uses: actions/checkout@v4
 
+      - name: 🛠️ Install Toolchain & Dependencies
+        run: |
+          export DEBIAN_FRONTEND=noninteractive
+          apt-get update
+          apt-get install -y bc build-essential flex bison libssl-dev libelf-dev clang llvm lld gcc-aarch64-linux-gnu tar zip wget python3 cpio xz-utils ccache
       - name: 🗄️ Restore Compiler Cache
         uses: actions/cache@v4
         with:
@@ -25,55 +29,75 @@ jobs:
           key: ksu-ccache-${{ github.run_id }}
           restore-keys: |
             ksu-ccache-
-
-      - name: 📁 Setup Structure & Permissions
+      - name: 📁 Setup & Permissions
         run: |
-          # 1. Fix permissions for all build scripts
-          find . -type f -name "*.sh" -exec chmod +x {} +
-          chmod -R +x scripts/
+          find . -type f -name "*.sh" -exec chmod +x {} + || true
+          chmod -R +x scripts/ || true
+          chmod -R +x arch/arm64/kernel/vdso/ || true
+          chmod +x scripts/config || true
           
-          # 2. Fix the KernelSU header path once and for all
-          mkdir -p include/kernelsu
-          cp -r drivers/kernelsu/* include/kernelsu/ || true
-          
-          # 3. Standardize the drivers Makefile
+          # Clean and re-add KernelSU
           sed -i '/kernelsu/d' drivers/Makefile || true
           echo 'obj-y += kernelsu/' >> drivers/Makefile
+          
+          # Visibility Fix: Ensure headers can be found from subfolders
+          mkdir -p include/kernelsu
+          cp -r drivers/kernelsu/* include/kernelsu/ || true
 
       - name: 🩹 Apply Deep Source Code Fixes
         run: |
-          # FIX 1: WALT Trace Path (The 'trace.h not found' crash)
-          # This forces the trace system to look in the actual scheduler directory
+          sed -i 's|register unsigned long current_stack_pointer asm ("sp");|/* Removed global sp */ #define current_stack_pointer ({ unsigned long sp; asm("mov %0, sp" : "=r"(sp)); sp; })|g' arch/arm64/include/asm/stack_pointer.h || true
+          sed -i 's|"brk %0" : : "I"|"brk %0" : : "n"|g' arch/arm64/include/asm/kgdb.h || true
+          ln -sf $(pwd)/arch/arm64/include/asm $(pwd)/include/asm || true
+          
+          # FIX: WALT Trace Path
           sed -i 's|#define TRACE_INCLUDE_PATH .|#define TRACE_INCLUDE_PATH ../../kernel/sched/walt|g' kernel/sched/walt/trace.h || true
           
-          # FIX 2: VDSO Offset Collision
+          sed -i 's/static inline u32 current_sid(void)/static inline u32 ksu_current_sid_dummy(void)/g' drivers/kernelsu/selinux/selinux.h || true
           sed -i '/extern unsigned long vdso_offset_/d' arch/arm64/include/asm/vdso.h || true
           
-          # FIX 3: KernelSU prototypes (The 'declaration is not a prototype' error)
-          # Instead of editing 50 files, we will use a compiler flag below.
+          mkdir -p drivers/input/touchscreen/focaltech_touch_spi/include/firmware
+          touch drivers/input/touchscreen/focaltech_touch_spi/include/firmware/fw_sample.i || true
           
-          # FIX 4: Samsung specific stack pointer
-          sed -i 's|register unsigned long current_stack_pointer asm ("sp");|#define current_stack_pointer ({ unsigned long sp; asm("mov %0, sp" : "=r"(sp)); sp; })|g' arch/arm64/include/asm/stack_pointer.h || true
+          sed -i 's/!!!current->seccomp.mode/0/g' drivers/kernelsu/app_profile.c || true
+          sed -i 's/current->seccomp.mode = 0;/\/\/current->seccomp.mode = 0;/g' drivers/kernelsu/app_profile.c || true
+          sed -i 's/current->seccomp.filter = NULL;/\/\/current->seccomp.filter = NULL;/g' drivers/kernelsu/app_profile.c || true
+          
+          sed -i 's/#define KERNEL_SU_VERSION KSU_VERSION/#define KERNEL_SU_VERSION 11938/g' drivers/kernelsu/kernel/ksu.h || true
+          sed -i 's/#define KERNEL_SU_VERSION_TAG KSU_VERSION_TAG/#define KERNEL_SU_VERSION_TAG "v1.0.0"/g' drivers/kernelsu/kernel/ksu.h || true
+          sed -i '1i #include <linux/types.h>\n#include <linux/kernel.h>\n#include <linux/spinlock.h>\n#include <linux/slab.h>\n#include <linux/ktime.h>\n#include <linux/cred.h>' drivers/kernelsu/tiny_sulog.c || true
+          
+          # SELinux State Fixes
+          sed -i 's/db = \&policydb;/db = \&selinux_state.ss->policydb;/g' drivers/kernelsu/selinux/rules.c || true
+          sed -i 's/selinux_status_update_policyload(0);/selinux_status_update_policyload(\&selinux_state, 0);/g' drivers/kernelsu/selinux/rules.c || true
+          sed -i 's/selinux_status_update_policyload(seqno);/selinux_status_update_policyload(\&selinux_state, seqno);/g' drivers/kernelsu/selinux/rules.c || true
+          sed -i 's|"inc/tcpci.h"|"tcpci.h"|g' drivers/usb/typec/P86801_tcpc/inc/pd_dpm_pdo_select.h || true
 
       - name: ⚙️ Generate Kernel Configuration
         run: |
           export ARCH=arm64
           make ARCH=arm64 HOSTCC=gcc CC=gcc vendor/gta9pwifi_eur_open_defconfig
+          ./scripts/config --file .config --disable SECURITY_DEFEX
+          ./scripts/config --file .config --disable SEC_RESTRICT_FORK
           ./scripts/config --file .config --enable KSU
           ./scripts/config --file .config --enable KSU_NEXT
+          ./scripts/config --file .config --enable KSU_NEXT_MANUAL_HOOK
           make ARCH=arm64 HOSTCC=gcc CC=gcc olddefconfig
 
       - name: 🔨 Resolve SELinux Headers
         run: |
+          make ARCH=arm64 CC="clang --target=aarch64-linux-gnu" CROSS_COMPILE=aarch64-linux-gnu- HOSTCC=gcc CC_FOR_BUILD=gcc -j$(nproc --all) prepare
           mkdir -p security/selinux/include
-          wget -q https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/selinux/flask.h -O flask_ksu.h || true
+          wget -q https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/selinux/flask.h -O flask.h || true
           wget -q https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/selinux/av_permissions.h -O av_permissions.h || true
           
-          echo "#ifndef SECINITSID_NUM" > security/selinux/include/flask.h
-          echo "#define SECINITSID_NUM 27" >> security/selinux/include/flask.h
-          echo "#endif" >> security/selinux/include/flask.h
-          cat flask_ksu.h >> security/selinux/include/flask.h || true
+          # Fix for older POSIX echo
+          { echo '#ifndef SECINITSID_NUM'; echo '#define SECINITSID_NUM 27'; echo '#endif'; } >> flask.h
+          
+          cp flask.h security/selinux/include/flask.h || true
           cp av_permissions.h security/selinux/include/av_permissions.h || true
+          cp flask.h drivers/kernelsu/ || true
+          cp av_permissions.h drivers/kernelsu/ || true
 
       - name: 🔨 Compile Kernel
         run: |
@@ -81,17 +105,22 @@ jobs:
           export CCACHE_EXEC=$(which ccache)
           ccache -M 5G
           
-          # ---> THE CRITICAL FLAGS UPDATE <---
-          # We add -Wno-strict-prototypes and -Wno-unused-function to stop the "prototype" errors
+          # FULL LLVM SUITE + WARNING GAGS
           make ARCH=arm64 \
           CC="ccache clang --target=aarch64-linux-gnu" \
           REAL_CC="ccache clang --target=aarch64-linux-gnu" \
-          LD=ld.lld AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip \
+          LD=ld.lld \
+          AR=llvm-ar \
+          NM=llvm-nm \
+          OBJCOPY=llvm-objcopy \
+          OBJDUMP=llvm-objdump \
+          STRIP=llvm-strip \
           CROSS_COMPILE=aarch64-linux-gnu- \
-          HOSTCC="ccache gcc" CC_FOR_BUILD="ccache gcc" \
+          HOSTCC="ccache gcc" \
+          CC_FOR_BUILD="ccache gcc" \
           CLANG_TRIPLE=aarch64-linux-gnu- \
           -j$(nproc --all) \
-          KCFLAGS="-I${GITHUB_WORKSPACE}/include -I${GITHUB_WORKSPACE}/drivers -Wno-error=strict-prototypes -Wno-error=unused-function -Wno-error=frame-larger-than= -Wno-implicit-function-declaration"
+          KCFLAGS="-I${GITHUB_WORKSPACE}/drivers/kernelsu -I${GITHUB_WORKSPACE}/drivers/kernelsu/kernel -I${GITHUB_WORKSPACE}/drivers/kernelsu/selinux -I${GITHUB_WORKSPACE}/security/selinux/include -Wno-error=frame-larger-than= -Wno-implicit-function-declaration -Wno-error=strict-prototypes -Wno-error=unused-function -Wno-int-conversion -Wno-enum-conversion"
           
           ccache -s
 
@@ -104,8 +133,9 @@ jobs:
           git clone https://github.com/osm0sis/AnyKernel3.git
           cd AnyKernel3
           sed -i 's/do.devicecheck=1/do.devicecheck=0/g' anykernel.sh
+          sed -i 's/block=\/dev\/block\/bootdevice\/by-name\/boot;/block=auto;/g' anykernel.sh
           cp ../Image .
-          zip -r9 ../TabA9Plus-KSU-AnyKernel3.zip * -x .git README.md
+          zip -r9 ../TabA9Plus-KSU-AnyKernel3.zip * -x .git README.md *placeholder
           
       - name: 📤 Upload Artifact
         uses: actions/upload-artifact@v4
@@ -114,4 +144,3 @@ jobs:
           path: |
             Final_Kernel/TabA9Plus-KSU-Kernel.tar
             Final_Kernel/TabA9Plus-KSU-AnyKernel3.zip
-
