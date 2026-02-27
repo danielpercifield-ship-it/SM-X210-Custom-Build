@@ -41,7 +41,7 @@ jobs:
           ln -sf $(pwd)/arch/arm64/include/asm $(pwd)/include/asm || true
           sed -i 's|#define TRACE_INCLUDE_PATH .|#define TRACE_INCLUDE_PATH ../../kernel/sched/walt|g' kernel/sched/walt/trace.h || true
           
-          # SELinux Dummy & Path Fixes
+          # SELinux Dummy & Header Redirection
           sed -i 's/static inline u32 current_sid(void)/static inline u32 ksu_current_sid_dummy(void)/g' drivers/kernelsu/selinux/selinux.h || true
           sed -i '/extern unsigned long vdso_offset_/d' arch/arm64/include/asm/vdso.h || true
           sed -i 's|#include "ss/policydb.h"|#include "../../security/selinux/ss/policydb.h"|g' drivers/kernelsu/kernel_compat.h || true
@@ -59,7 +59,11 @@ jobs:
           # USB-C Header Path Fix
           sed -i 's|"inc/tcpci.h"|"tcpci.h"|g' drivers/usb/typec/P86801_tcpc/inc/pd_dpm_pdo_select.h || true
           
-          # Fix KernelSU paths 
+          # FORCE VERSION DEFINES (Fix for undeclared identifier error)
+          # This appends the missing macros to the top of the header file.
+          sed -i '1i #define KSU_VERSION 11938\n#define KSU_VERSION_TAG "v1.0.0"' drivers/kernelsu/kernel/ksu.h || true
+          
+          # Fix KernelSU Include Path conflicts
           sed -i 's|#include "../ksu.h"|#include "../kernel/ksu.h"|g' drivers/kernelsu/selinux/selinux.c || true
           sed -i 's|#include "../kernksu.h"|#include "../kernel/ksu.h"|g' drivers/kernelsu/selinux/selinux.c || true
           sed -i 's|#include "ksu.h"|#include "../kernel/ksu.h"|g' drivers/kernelsu/selinux/selinux.c || true
@@ -69,13 +73,42 @@ jobs:
           sed -i 's|selinux_status_update_policyload(0);|selinux_status_update_policyload(\&selinux_state, 0);|g' drivers/kernelsu/selinux/rules.c || true
           sed -i 's|selinux_status_update_policyload(seqno);|selinux_status_update_policyload(\&selinux_state, seqno);|g' drivers/kernelsu/selinux/rules.c || true
 
-          # === LINKER FIXES ===
-          # Remove tiny_sulog.o from build list because it's included inside supercalls.c
-          sed -i 's/tiny_sulog\.o//g' drivers/kernelsu/Makefile || true
-          
-          # Scrub stray quoted paths that break the aarch64 linker
-          sed -i 's|"drivers/kernelsu/"|drivers/kernelsu/|g' Makefile || true
-          sed -i 's|"drivers/kernelsu"|drivers/kernelsu|g' Makefile || true
+          # Inject missing headers into tiny_sulog.c
+          sed -i '1i #include <linux/types.h>\n#include <linux/kernel.h>\n#include <linux/spinlock.h>\n#include <linux/slab.h>\n#include <linux/ktime.h>\n#include <linux/cred.h>' drivers/kernelsu/tiny_sulog.c || true
+
+      - name: 🛠️ Force KernelSU Makefile
+        run: |
+          cat <<EOF > drivers/kernelsu/Makefile
+          obj-y += kernel/ksu.o
+          obj-y += allowlist.o
+          obj-y += apk_sign.o
+          obj-y += app_profile.o
+          obj-y += extras.o
+          obj-y += feature.o
+          obj-y += file_wrapper.o
+          obj-y += kernel_compat.o
+          obj-y += kernel_umount.o
+          obj-y += ksud.o
+          obj-y += lsm_hooks.o
+          obj-y += seccomp_cache.o
+          obj-y += setuid_hook.o
+          obj-y += su_mount_ns.o
+          obj-y += sucompat.o
+          obj-y += supercalls.o
+          obj-y += throne_tracker.o
+          obj-y += util.o
+          obj-y += selinux/rules.o
+          obj-y += selinux/selinux.o
+          obj-y += selinux/sepolicy.o
+
+          ccflags-y += -I\$(srctree)/drivers/kernelsu/kernel
+          ccflags-y += -I\$(srctree)/security/selinux/include
+          ccflags-y += -I\$(srctree)/security/selinux
+          ccflags-y += -DCONFIG_KSU_NEXT_MANUAL_HOOK
+          ccflags-y += -Wno-strict-prototypes -Wno-implicit-function-declaration
+          ccflags-y += -DKSU_NEXT_EXPECTED_SIZE=0x3e6
+          ccflags-y += -DKSU_NEXT_EXPECTED_HASH=\\"79e590113c4c4c0c222978e413a5faa801666957b1212a328e46c00c69821bf7\\"
+          EOF
 
       - name: ⚙️ Generate Kernel Configuration
         run: |
