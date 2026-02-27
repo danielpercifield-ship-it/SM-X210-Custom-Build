@@ -31,7 +31,7 @@ jobs:
           chmod -R +x arch/arm64/kernel/vdso/ || true
           chmod +x scripts/config || true
           
-          # CLEAN FIX: CONFIG_KSU handles directory inclusion. Manual adds cause double linking.
+          # CLEAN FIX: Remove manual KSU entries to prevent double-linking.
           sed -i '/kernelsu/d' drivers/Makefile || true
           
           mkdir -p include/kernelsu
@@ -39,13 +39,13 @@ jobs:
 
       - name: 🩹 Apply Deep Source Code Fixes
         run: |
-          # Architecture & Trace Path Fixes
+          # Architecture & Trace Fixes
           sed -i 's|register unsigned long current_stack_pointer asm ("sp");|/* Removed global sp */ #define current_stack_pointer ({ unsigned long sp; asm("mov %0, sp" : "=r"(sp)); sp; })|g' arch/arm64/include/asm/stack_pointer.h || true
           sed -i 's|"brk %0" : : "I"|"brk %0" : : "n"|g' arch/arm64/include/asm/kgdb.h || true
           ln -sf $(pwd)/arch/arm64/include/asm $(pwd)/include/asm || true
           sed -i 's|#define TRACE_INCLUDE_PATH .|#define TRACE_INCLUDE_PATH ../../kernel/sched/walt|g' kernel/sched/walt/trace.h || true
           
-          # SELinux Dummy & Compat Fixes
+          # SELinux Dummy Fixes
           sed -i 's/static inline u32 current_sid(void)/static inline u32 ksu_current_sid_dummy(void)/g' drivers/kernelsu/selinux/selinux.h || true
           sed -i '/extern unsigned long vdso_offset_/d' arch/arm64/include/asm/vdso.h || true
           
@@ -56,17 +56,17 @@ jobs:
           sed -i 's/current->seccomp.mode = 0;/\/\/current->seccomp.mode = 0;/g' drivers/kernelsu/app_profile.c || true
           sed -i 's/current->seccomp.filter = NULL;/\/\/current->seccomp.filter = NULL;/g' drivers/kernelsu/app_profile.c || true
           
-          # Fix KernelSU Versioning (targeted to subfolder)
+          # Fix KernelSU Version Variables (Targeted to the kernel subfolder)
           sed -i 's/#define KERNEL_SU_VERSION KSU_VERSION/#define KERNEL_SU_VERSION 11938/g' drivers/kernelsu/kernel/ksu.h || true
           sed -i 's/#define KERNEL_SU_VERSION_TAG KSU_VERSION_TAG/#define KERNEL_SU_VERSION_TAG "v1.0.0"/g' drivers/kernelsu/kernel/ksu.h || true
           
-          # Fix KernelSU Include Path Conflicts
+          # Fix KernelSU Include Paths
           sed -i 's|#include "../ksu.h"|#include "../kernel/ksu.h"|g' drivers/kernelsu/selinux/selinux.c || true
           sed -i 's|#include "../kernksu.h"|#include "../kernel/ksu.h"|g' drivers/kernelsu/selinux/selinux.c || true
           sed -i 's|#include "ksu.h"|#include "../kernel/ksu.h"|g' drivers/kernelsu/selinux/selinux.c || true
           sed -i 's|"inc/tcpci.h"|"tcpci.h"|g' drivers/usb/typec/P86801_tcpc/inc/pd_dpm_pdo_select.h || true
 
-          # Restore SELinux rules.c logic
+          # Restore rules.c SELinux struct fixes
           sed -i 's|db = \&policydb;|db = \&selinux_state.ss->policydb;|g' drivers/kernelsu/selinux/rules.c || true
           sed -i 's|selinux_status_update_policyload(0);|selinux_status_update_policyload(\&selinux_state, 0);|g' drivers/kernelsu/selinux/rules.c || true
           sed -i 's|selinux_status_update_policyload(seqno);|selinux_status_update_policyload(\&selinux_state, seqno);|g' drivers/kernelsu/selinux/rules.c || true
@@ -74,19 +74,16 @@ jobs:
           # Inject missing headers into tiny_sulog.c
           sed -i '1i #include <linux/types.h>\n#include <linux/kernel.h>\n#include <linux/spinlock.h>\n#include <linux/slab.h>\n#include <linux/ktime.h>\n#include <linux/cred.h>' drivers/kernelsu/tiny_sulog.c || true
 
-          # === RESOLVE LINKER CONFLICTS ===
-          # Remove tiny_sulog.o from build list because it's included inside supercalls.c
+          # === FINAL LINKER FIX (SURGICAL REMOVAL) ===
+          # Aggressively remove tiny_sulog.o to stop multiple definition errors
+          sed -i 's/tiny_sulog.o//g' drivers/kernelsu/Makefile || true
           sed -i 's/tiny_sulog\.o//g' drivers/kernelsu/Makefile || true
-          
-          # Scrub stray quoted paths that break the aarch64 linker
-          sed -i 's|"drivers/kernelsu/"|drivers/kernelsu/|g' Makefile drivers/Makefile || true
-          sed -i 's|"drivers/kernelsu"|drivers/kernelsu|g' Makefile drivers/Makefile || true
 
       - name: ⚙️ Generate Kernel Configuration
         run: |
           export ARCH=arm64
           
-          # Verification of file path from your screenshot
+          # Locate the defconfig and copy it to the standard directory
           DEFCONFIG_FILE=$(find . -name "gta9pwifi_eur_open_defconfig" | head -n 1)
           if [ -z "$DEFCONFIG_FILE" ]; then
             echo "Error: Defconfig not found!"
@@ -94,8 +91,10 @@ jobs:
           fi
           cp "$DEFCONFIG_FILE" arch/arm64/configs/custom_vendor_defconfig
           
-          # Build config and enable KSU Next
+          # Apply the config
           make ARCH=arm64 HOSTCC=gcc CC=gcc custom_vendor_defconfig
+          
+          # Inject KSU and disable Knox features
           ./scripts/config --file .config --disable SECURITY_DEFEX
           ./scripts/config --file .config --disable SEC_RESTRICT_FORK
           ./scripts/config --file .config --enable KSU
@@ -128,7 +127,7 @@ jobs:
           export CCACHE_EXEC=$(which ccache)
           ccache -M 5G
           
-          # Armoring KCFLAGS against modern Clang strictness
+          # KCFLAGS updated to force the compiler to ignore Samsung's warnings
           make ARCH=arm64 \
           CC="ccache clang --target=aarch64-linux-gnu" \
           REAL_CC="ccache clang --target=aarch64-linux-gnu" \
@@ -148,10 +147,10 @@ jobs:
           cp arch/arm64/boot/Image Final_Kernel/ || true
           cd Final_Kernel
           
-          # Tar for Odin
+          # Create Odin Tarball
           tar -cvf TabA9Plus-KSU-Kernel.tar Image || true
           
-          # Zip for Custom Recovery
+          # Create Flashable Zip using AnyKernel3
           git clone https://github.com/osm0sis/AnyKernel3.git
           cd AnyKernel3
           sed -i 's/do.devicecheck=1/do.devicecheck=0/g' anykernel.sh
