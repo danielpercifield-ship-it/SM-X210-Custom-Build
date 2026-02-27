@@ -4,7 +4,7 @@ on:
 
 jobs:
   build-kernel:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-20.04
 
     steps:
       - name: 🛠️ Prepare Environment & Install Toolchain
@@ -54,9 +54,11 @@ jobs:
           sed -i 's/current->seccomp.mode = 0;/\/\/current->seccomp.mode = 0;/g' drivers/kernelsu/app_profile.c || true
           sed -i 's/current->seccomp.filter = NULL;/\/\/current->seccomp.filter = NULL;/g' drivers/kernelsu/app_profile.c || true
           
-          # Fix KernelSU paths (Catches both the standard name and the 'kernksu' typo)
-          sed -i 's|../ksu.h|ksu.h|g' drivers/kernelsu/selinux/selinux.c || true
-          sed -i 's|../kernksu.h|ksu.h|g' drivers/kernelsu/selinux/selinux.c || true
+          # Fix KernelSU paths (Bulletproof targeting based on the VS Code structure)
+          sed -i 's|#include "../ksu.h"|#include "../kernel/ksu.h"|g' drivers/kernelsu/selinux/selinux.c || true
+          sed -i 's|#include "../kernksu.h"|#include "../kernel/ksu.h"|g' drivers/kernelsu/selinux/selinux.c || true
+          sed -i 's|#include "ksu.h"|#include "../kernel/ksu.h"|g' drivers/kernelsu/selinux/selinux.c || true
+          
           sed -i 's|"inc/tcpci.h"|"tcpci.h"|g' drivers/usb/typec/P86801_tcpc/inc/pd_dpm_pdo_select.h || true
 
       - name: ⚙️ Generate Kernel Configuration
@@ -107,7 +109,7 @@ jobs:
           export CCACHE_EXEC=$(which ccache)
           ccache -M 5G
           
-          # Added 'Image' to the end of the make command to specify the output target
+          # KCFLAGS updated to force the compiler to ignore Samsung's 'implicit-int' code errors
           make ARCH=arm64 \
           CC="ccache clang --target=aarch64-linux-gnu" \
           REAL_CC="ccache clang --target=aarch64-linux-gnu" \
@@ -116,7 +118,7 @@ jobs:
           CC_FOR_BUILD="ccache gcc" \
           CLANG_TRIPLE=aarch64-linux-gnu- \
           -j$(nproc --all) \
-          KCFLAGS="-I${GITHUB_WORKSPACE}/drivers/kernelsu -I${GITHUB_WORKSPACE}/security/selinux -I${GITHUB_WORKSPACE}/security/selinux/include -I${GITHUB_WORKSPACE}/drivers -Wno-error=frame-larger-than= -Wno-implicit-function-declaration -Wno-strict-prototypes -Wno-int-conversion -Wno-enum-conversion" \
+          KCFLAGS="-I${GITHUB_WORKSPACE}/drivers/kernelsu -I${GITHUB_WORKSPACE}/security/selinux -I${GITHUB_WORKSPACE}/security/selinux/include -I${GITHUB_WORKSPACE}/drivers -Wno-error=frame-larger-than= -Wno-implicit-function-declaration -Wno-strict-prototypes -Wno-int-conversion -Wno-enum-conversion -Wno-implicit-int -Wno-error=implicit-int" \
           Image
           
           ccache -s
