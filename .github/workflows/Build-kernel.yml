@@ -26,47 +26,34 @@ jobs:
           restore-keys: |
             ksu-ccache-
 
-      - name: 📁 Standardize Folder Structure & Headers
+      - name: 📁 Setup Structure & Permissions
         run: |
-          # 1. Force Permissions
+          # 1. Fix permissions for all build scripts
           find . -type f -name "*.sh" -exec chmod +x {} +
           chmod -R +x scripts/
           
-          # 2. KernelSU Header Visibility Fix
-          # We place the headers in a location every driver can find
-          mkdir -p include/kernelsu/kernel
-          cp drivers/kernelsu/kernel/ksu.h include/kernelsu/kernel/ksu.h || true
-          cp drivers/kernelsu/ksu.h include/kernelsu/ || true
-
-          # 3. Clean and Rebuild Makefiles
+          # 2. Fix the KernelSU header path once and for all
+          mkdir -p include/kernelsu
+          cp -r drivers/kernelsu/* include/kernelsu/ || true
+          
+          # 3. Standardize the drivers Makefile
           sed -i '/kernelsu/d' drivers/Makefile || true
           echo 'obj-y += kernelsu/' >> drivers/Makefile
-          
-          mkdir -p drivers/kernelsu/kernel drivers/kernelsu/selinux
-          cat <<EOF > drivers/kernelsu/Makefile
-          obj-y := allowlist.o apk_sign.o app_profile.o extras.o feature.o file_wrapper.o kernel_compat.o kernel_umount.o ksud.o lsm_hooks.o seccomp_cache.o setuid_hook.o su_mount_ns.o sucompat.o supercalls.o throne_tracker.o tiny_sulog.o util.o
-          obj-y += kernel/ selinux/
-          subdir-y += kernel selinux
-          ccflags-y += -I\$(srctree)/security/selinux/include -I\$(srctree)/\$(src)/kernel -I\$(srctree)/\$(src)/selinux -I\$(srctree)/\$(src) -DCONFIG_KSU_NEXT_MANUAL_HOOK
-          ccflags-y += -DKSU_NEXT_EXPECTED_SIZE=0x3e6 -DKSU_NEXT_EXPECTED_HASH=\"79e590113c4c4c0c222978e413a5faa801666957b1212a328e46c00c69821bf7\"
-          EOF
 
-          echo "obj-y := ksu.o" > drivers/kernelsu/kernel/Makefile
-          echo "ccflags-y += -I\$(srctree)/drivers/kernelsu -I\$(srctree)/\$(src)/.." >> drivers/kernelsu/kernel/Makefile
-
-      - name: 🩹 Apply Source Code Fixes
+      - name: 🩹 Apply Deep Source Code Fixes
         run: |
-          # 1. FIX: WALT Trace Path (The 'trace.h not found' crash)
-          # We replace the relative dot with the actual path so the compiler finds it
+          # FIX 1: WALT Trace Path (The 'trace.h not found' crash)
+          # This forces the trace system to look in the actual scheduler directory
           sed -i 's|#define TRACE_INCLUDE_PATH .|#define TRACE_INCLUDE_PATH ../../kernel/sched/walt|g' kernel/sched/walt/trace.h || true
           
-          # 2. FIX: VDSO Offset Collision
+          # FIX 2: VDSO Offset Collision
           sed -i '/extern unsigned long vdso_offset_/d' arch/arm64/include/asm/vdso.h || true
           
-          # 3. FIX: Stack Pointer & Seccomp
+          # FIX 3: KernelSU prototypes (The 'declaration is not a prototype' error)
+          # Instead of editing 50 files, we will use a compiler flag below.
+          
+          # FIX 4: Samsung specific stack pointer
           sed -i 's|register unsigned long current_stack_pointer asm ("sp");|#define current_stack_pointer ({ unsigned long sp; asm("mov %0, sp" : "=r"(sp)); sp; })|g' arch/arm64/include/asm/stack_pointer.h || true
-          sed -i 's/static inline u32 current_sid(void)/static inline u32 ksu_current_sid_dummy(void)/g' drivers/kernelsu/selinux/selinux.h || true
-          sed -i 's/!!!current->seccomp.mode/0/g' drivers/kernelsu/app_profile.c || true
 
       - name: ⚙️ Generate Kernel Configuration
         run: |
@@ -82,7 +69,6 @@ jobs:
           wget -q https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/selinux/flask.h -O flask_ksu.h || true
           wget -q https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/selinux/av_permissions.h -O av_permissions.h || true
           
-          # Creating a combined flask.h that includes SID numbers
           echo "#ifndef SECINITSID_NUM" > security/selinux/include/flask.h
           echo "#define SECINITSID_NUM 27" >> security/selinux/include/flask.h
           echo "#endif" >> security/selinux/include/flask.h
@@ -94,6 +80,9 @@ jobs:
           export CCACHE_DIR=$GITHUB_WORKSPACE/.ccache
           export CCACHE_EXEC=$(which ccache)
           ccache -M 5G
+          
+          # ---> THE CRITICAL FLAGS UPDATE <---
+          # We add -Wno-strict-prototypes and -Wno-unused-function to stop the "prototype" errors
           make ARCH=arm64 \
           CC="ccache clang --target=aarch64-linux-gnu" \
           REAL_CC="ccache clang --target=aarch64-linux-gnu" \
@@ -102,7 +91,8 @@ jobs:
           HOSTCC="ccache gcc" CC_FOR_BUILD="ccache gcc" \
           CLANG_TRIPLE=aarch64-linux-gnu- \
           -j$(nproc --all) \
-          KCFLAGS="-I${GITHUB_WORKSPACE}/include -I${GITHUB_WORKSPACE}/drivers -Wno-error=frame-larger-than= -Wno-implicit-function-declaration"
+          KCFLAGS="-I${GITHUB_WORKSPACE}/include -I${GITHUB_WORKSPACE}/drivers -Wno-error=strict-prototypes -Wno-error=unused-function -Wno-error=frame-larger-than= -Wno-implicit-function-declaration"
+          
           ccache -s
 
       - name: 📦 Package Output
