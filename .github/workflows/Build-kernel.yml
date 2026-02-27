@@ -76,6 +76,13 @@ jobs:
           # Remove tiny_sulog.o from the KSU Makefile so it doesn't double-link with supercalls.o
           sed -i 's/tiny_sulog\.o//g' drivers/kernelsu/Makefile || true
 
+          # 1. Prevent tiny_sulog from being compiled twice
+          sed -i 's/tiny_sulog.o//g' drivers/kernelsu/Makefile || true
+
+          # 2. Fix the "cannot find drivers/kernelsu/" error by removing problematic quotes in Makefiles
+          sed -i 's|"drivers/kernelsu/"|drivers/kernelsu/|g' Makefile || true
+          sed -i 's|"drivers/kernelsu"|drivers/kernelsu|g' Makefile || true
+
       - name: ⚙️ Generate Kernel Configuration
         run: |
           export ARCH=arm64
