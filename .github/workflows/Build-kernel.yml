@@ -70,7 +70,7 @@ jobs:
           sed -i 's|selinux_status_update_policyload(0);|selinux_status_update_policyload(\&selinux_state, 0);|g' drivers/kernelsu/selinux/rules.c || true
           sed -i 's|selinux_status_update_policyload(seqno);|selinux_status_update_policyload(\&selinux_state, seqno);|g' drivers/kernelsu/selinux/rules.c || true
 
-          # NEW FIX: Inject missing headers into tiny_sulog.c so the compiler knows what uint32_t is
+          # Inject missing headers into tiny_sulog.c so the compiler knows what uint32_t is
           sed -i '1i #include <linux/types.h>\n#include <linux/kernel.h>\n#include <linux/spinlock.h>\n#include <linux/slab.h>\n#include <linux/ktime.h>\n#include <linux/cred.h>' drivers/kernelsu/tiny_sulog.c || true
 
       - name: ⚙️ Generate Kernel Configuration
@@ -121,7 +121,7 @@ jobs:
           export CCACHE_EXEC=$(which ccache)
           ccache -M 5G
           
-          # KCFLAGS updated to force the compiler to ignore Samsung's 'implicit-int' code errors
+          # KCFLAGS updated to force the compiler to ignore 'unused-but-set-variable' errors
           make ARCH=arm64 \
           CC="ccache clang --target=aarch64-linux-gnu" \
           REAL_CC="ccache clang --target=aarch64-linux-gnu" \
@@ -130,7 +130,7 @@ jobs:
           CC_FOR_BUILD="ccache gcc" \
           CLANG_TRIPLE=aarch64-linux-gnu- \
           -j$(nproc --all) \
-          KCFLAGS="-I${GITHUB_WORKSPACE}/drivers/kernelsu -I${GITHUB_WORKSPACE}/security/selinux -I${GITHUB_WORKSPACE}/security/selinux/include -I${GITHUB_WORKSPACE}/drivers -Wno-error=frame-larger-than= -Wno-implicit-function-declaration -Wno-strict-prototypes -Wno-int-conversion -Wno-enum-conversion -Wno-implicit-int -Wno-error=implicit-int" \
+          KCFLAGS="-I${GITHUB_WORKSPACE}/drivers/kernelsu -I${GITHUB_WORKSPACE}/security/selinux -I${GITHUB_WORKSPACE}/security/selinux/include -I${GITHUB_WORKSPACE}/drivers -Wno-error=frame-larger-than= -Wno-implicit-function-declaration -Wno-strict-prototypes -Wno-int-conversion -Wno-enum-conversion -Wno-implicit-int -Wno-error=implicit-int -Wno-unused-but-set-variable -Wno-error=unused-but-set-variable" \
           Image
           
           ccache -s
