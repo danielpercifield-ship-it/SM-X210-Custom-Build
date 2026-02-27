@@ -20,6 +20,7 @@ ccflags-y += -I$(srctree)/security/selinux/include
 ccflags-y += -I$(srctree)/$(src)/selinux
 ccflags-y += -I$(srctree)/$(src)
 ccflags-y += -I$(src)/kernel
+ccflags-y += -DCONFIG_SECURITY_SELINUX_SIDTAB_HASH_BITS=9
 
 
 # Critical Flags for KSU_NEXT
