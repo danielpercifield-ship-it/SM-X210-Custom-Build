@@ -41,9 +41,12 @@ jobs:
           ln -sf $(pwd)/arch/arm64/include/asm $(pwd)/include/asm || true
           sed -i 's|#define TRACE_INCLUDE_PATH .|#define TRACE_INCLUDE_PATH ../../kernel/sched/walt|g' kernel/sched/walt/trace.h || true
           
-          # SELinux Dummy Fixes
+          # SELinux Dummy & Path Fixes
           sed -i 's/static inline u32 current_sid(void)/static inline u32 ksu_current_sid_dummy(void)/g' drivers/kernelsu/selinux/selinux.h || true
           sed -i '/extern unsigned long vdso_offset_/d' arch/arm64/include/asm/vdso.h || true
+          
+          # FIX: Redirect ss/policydb.h to the absolute security path
+          sed -i 's|#include "ss/policydb.h"|#include "../../security/selinux/ss/policydb.h"|g' drivers/kernelsu/kernel_compat.h || true
           
           # Focaltech & App Profile Fixes
           mkdir -p drivers/input/touchscreen/focaltech_touch_spi/include/firmware
@@ -99,6 +102,7 @@ jobs:
 
           ccflags-y += -I\$(srctree)/drivers/kernelsu/kernel
           ccflags-y += -I\$(srctree)/security/selinux/include
+          ccflags-y += -I\$(srctree)/security/selinux
           ccflags-y += -DCONFIG_KSU_NEXT_MANUAL_HOOK
           ccflags-y += -Wno-strict-prototypes -Wno-implicit-function-declaration
           ccflags-y += -DKSU_NEXT_EXPECTED_SIZE=0x3e6
@@ -124,7 +128,6 @@ jobs:
           mkdir -p security/selinux/include
           mkdir -p drivers/kernelsu
           
-          # Manually generating flask.h to avoid 404 errors and ensure correct SID mapping
           cat <<EOF > flask.h
           #ifndef _SELINUX_FLASK_H_
           #define _SELINUX_FLASK_H_
@@ -140,7 +143,6 @@ jobs:
           #endif
           EOF
 
-          # Manually generating av_permissions.h
           cat <<EOF > av_permissions.h
           #ifndef _SELINUX_AV_PERMISSIONS_H_
           #define _SELINUX_AV_PERMISSIONS_H_
@@ -152,7 +154,6 @@ jobs:
           #endif
           EOF
           
-          # Deploy to all paths
           cp flask.h security/selinux/include/flask.h
           cp av_permissions.h security/selinux/include/av_permissions.h
           cp flask.h drivers/kernelsu/flask.h
@@ -168,7 +169,7 @@ jobs:
           CROSS_COMPILE=aarch64-linux-gnu- \
           HOSTCC="ccache gcc" \
           -j$(nproc --all) \
-          KCFLAGS="-Idrivers/kernelsu -Idrivers/kernelsu/kernel -Isecurity/selinux/include -Wno-error=frame-larger-than= -Wno-implicit-function-declaration -Wno-strict-prototypes -Wno-int-conversion -Wno-enum-conversion -Wno-implicit-int -Wno-error=implicit-int -Wno-unused-but-set-variable -Wno-error=unused-but-set-variable" \
+          KCFLAGS="-Idrivers/kernelsu -Idrivers/kernelsu/kernel -Isecurity/selinux/include -Isecurity/selinux -Wno-error=frame-larger-than= -Wno-implicit-function-declaration -Wno-strict-prototypes -Wno-int-conversion -Wno-enum-conversion -Wno-implicit-int -Wno-error=implicit-int -Wno-unused-but-set-variable -Wno-error=unused-but-set-variable" \
           Image
 
       - name: 📦 Package Output
