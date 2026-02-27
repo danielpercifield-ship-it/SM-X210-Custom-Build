@@ -54,8 +54,9 @@ jobs:
           sed -i 's/current->seccomp.mode = 0;/\/\/current->seccomp.mode = 0;/g' drivers/kernelsu/app_profile.c || true
           sed -i 's/current->seccomp.filter = NULL;/\/\/current->seccomp.filter = NULL;/g' drivers/kernelsu/app_profile.c || true
           
-          # Fix KernelSU paths
+          # Fix KernelSU paths (Catches both the standard name and the 'kernksu' typo)
           sed -i 's|../ksu.h|ksu.h|g' drivers/kernelsu/selinux/selinux.c || true
+          sed -i 's|../kernksu.h|ksu.h|g' drivers/kernelsu/selinux/selinux.c || true
           sed -i 's|"inc/tcpci.h"|"tcpci.h"|g' drivers/usb/typec/P86801_tcpc/inc/pd_dpm_pdo_select.h || true
 
       - name: ⚙️ Generate Kernel Configuration
