@@ -29,7 +29,7 @@ jobs:
           chmod -R +x scripts/
           find . -type f -name "*.sh" -exec chmod +x {} + || true
           
-          # CLEAN FIX: Ensure kernelsu is included only once
+          # CLEAN FIX: Ensure kernelsu is included only once to prevent double-linking
           sed -i '/kernelsu/d' drivers/Makefile
           echo "obj-y += kernelsu/" >> drivers/Makefile
 
@@ -52,7 +52,7 @@ jobs:
           sed -i 's/current->seccomp.mode = 0;/\/\/current->seccomp.mode = 0;/g' drivers/kernelsu/app_profile.c || true
           sed -i 's/current->seccomp.filter = NULL;/\/\/current->seccomp.filter = NULL;/g' drivers/kernelsu/app_profile.c || true
           
-          # Fix KernelSU paths in drivers/input/input.c (Manual Hook fix)
+          # Fix Manual Hook path in input.c
           sed -i 's|<kernelsu/kernel/ksu.h>|"../kernelsu/kernel/ksu.h"|g' drivers/input/input.c || true
           
           # Fix KernelSU Version Variables
@@ -63,9 +63,8 @@ jobs:
           sed -i 's|#include "../ksu.h"|#include "../kernel/ksu.h"|g' drivers/kernelsu/selinux/selinux.c || true
           sed -i 's|#include "../kernksu.h"|#include "../kernel/ksu.h"|g' drivers/kernelsu/selinux/selinux.c || true
           sed -i 's|#include "ksu.h"|#include "../kernel/ksu.h"|g' drivers/kernelsu/selinux/selinux.c || true
-          sed -i 's|"inc/tcpci.h"|"tcpci.h"|g' drivers/usb/typec/P86801_tcpc/inc/pd_dpm_pdo_select.h || true
-
-          # Restore rules.c SELinux struct fixes
+          
+          # Restore rules.c SELinux fixes
           sed -i 's|db = \&policydb;|db = \&selinux_state.ss->policydb;|g' drivers/kernelsu/selinux/rules.c || true
           sed -i 's|selinux_status_update_policyload(0);|selinux_status_update_policyload(\&selinux_state, 0);|g' drivers/kernelsu/selinux/rules.c || true
           sed -i 's|selinux_status_update_policyload(seqno);|selinux_status_update_policyload(\&selinux_state, seqno);|g' drivers/kernelsu/selinux/rules.c || true
@@ -122,19 +121,25 @@ jobs:
 
       - name: 🔨 Resolve SELinux Headers
         run: |
-          make ARCH=arm64 CC="clang --target=aarch64-linux-gnu" CROSS_COMPILE=aarch64-linux-gnu- HOSTCC=gcc CC_FOR_BUILD=gcc -j$(nproc --all) prepare
-          wget -q https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/selinux/flask.h -O flask.h
-          wget -q https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/selinux/av_permissions.h -O av_permissions.h
-          echo -e "#ifndef SECINITSID_NUM\n#define SECINITSID_NUM 27\n#endif\n#ifndef CONFIG_SECURITY_SELINUX_SIDTAB_HASH_BITS\n#define CONFIG_SECURITY_SELINUX_SIDTAB_HASH_BITS 9\n#endif" >> flask.h
+          # Pre-prepare directories
           mkdir -p security/selinux/include
+          mkdir -p drivers/kernelsu
+          
+          # More resilient download method
+          curl -sSL https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/selinux/flask.h -o flask.h
+          curl -sSL https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/selinux/av_permissions.h -o av_permissions.h
+          
+          # Inject required bit table and SID constants
+          echo -e "#ifndef SECINITSID_NUM\n#define SECINITSID_NUM 27\n#endif\n#ifndef CONFIG_SECURITY_SELINUX_SIDTAB_HASH_BITS\n#define CONFIG_SECURITY_SELINUX_SIDTAB_HASH_BITS 9\n#endif" >> flask.h
+          
+          # Deploy to multiple paths to satisfy all includes
           cp flask.h security/selinux/include/flask.h
           cp av_permissions.h security/selinux/include/av_permissions.h
-          cp flask.h drivers/kernelsu/
-          cp av_permissions.h drivers/kernelsu/
+          cp flask.h drivers/kernelsu/flask.h
+          cp av_permissions.h drivers/kernelsu/av_permissions.h
 
       - name: 🔨 Compile Kernel
         run: |
-          # Armoring against implicit-int and missing includes
           make ARCH=arm64 \
           CC="ccache clang --target=aarch64-linux-gnu" \
           REAL_CC="ccache clang --target=aarch64-linux-gnu" \
