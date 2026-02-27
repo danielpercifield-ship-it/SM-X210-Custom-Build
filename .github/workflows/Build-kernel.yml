@@ -31,9 +31,8 @@ jobs:
           chmod -R +x arch/arm64/kernel/vdso/ || true
           chmod +x scripts/config || true
           
-          # Clean slate: Guarantee KSU is only added to drivers/Makefile EXACTLY once
+          # CLEAN FIX: Remove any manual KSU entries. CONFIG_KSU=y will handle inclusion automatically.
           sed -i '/kernelsu/d' drivers/Makefile || true
-          echo 'obj-y += kernelsu/' >> drivers/Makefile
           
           mkdir -p include/kernelsu
           ln -sf ${GITHUB_WORKSPACE}/drivers/kernelsu ${GITHUB_WORKSPACE}/include/kernelsu || true
@@ -62,6 +61,7 @@ jobs:
           sed -i 's|#include "../ksu.h"|#include "../kernel/ksu.h"|g' drivers/kernelsu/selinux/selinux.c || true
           sed -i 's|#include "../kernksu.h"|#include "../kernel/ksu.h"|g' drivers/kernelsu/selinux/selinux.c || true
           sed -i 's|#include "ksu.h"|#include "../kernel/ksu.h"|g' drivers/kernelsu/selinux/selinux.c || true
+          
           sed -i 's|"inc/tcpci.h"|"tcpci.h"|g' drivers/usb/typec/P86801_tcpc/inc/pd_dpm_pdo_select.h || true
 
           # Restore rules.c SELinux struct fixes
@@ -75,13 +75,6 @@ jobs:
           # === FINAL LINKER FIX ===
           # Remove tiny_sulog.o from the KSU Makefile so it doesn't double-link with supercalls.o
           sed -i 's/tiny_sulog\.o//g' drivers/kernelsu/Makefile || true
-
-          # 1. Prevent tiny_sulog from being compiled twice
-          sed -i 's/tiny_sulog.o//g' drivers/kernelsu/Makefile || true
-
-          # 2. Fix the "cannot find drivers/kernelsu/" error by removing problematic quotes in Makefiles
-          sed -i 's|"drivers/kernelsu/"|drivers/kernelsu/|g' Makefile || true
-          sed -i 's|"drivers/kernelsu"|drivers/kernelsu|g' Makefile || true
 
       - name: ⚙️ Generate Kernel Configuration
         run: |
@@ -119,6 +112,7 @@ jobs:
           echo '#ifndef CONFIG_SECURITY_SELINUX_SIDTAB_HASH_BITS' >> flask.h
           echo '#define CONFIG_SECURITY_SELINUX_SIDTAB_HASH_BITS 9' >> flask.h
           echo '#endif' >> flask.h
+          
           cp flask.h security/selinux/include/flask.h || true
           cp av_permissions.h security/selinux/include/av_permissions.h || true
           cp flask.h drivers/kernelsu/ || true
@@ -152,7 +146,7 @@ jobs:
           
           # Create Odin Tarball
           tar -cvf TabA9Plus-KSU-Kernel.tar Image || true
-
+          
           # Create Flashable Zip using AnyKernel3
           git clone https://github.com/osm0sis/AnyKernel3.git
           cd AnyKernel3
@@ -168,3 +162,4 @@ jobs:
           path: |
             Final_Kernel/TabA9Plus-KSU-Kernel.tar
             Final_Kernel/TabA9Plus-KSU-AnyKernel3.zip
+
