@@ -1,4 +1,4 @@
-name: Build vmlinux with KSU
+name: "SM-X210 KSU Build (Final)"
 
 on:
   workflow_dispatch:
@@ -36,12 +36,21 @@ jobs:
           export ARCH=arm64
           export CROSS_COMPILE=aarch64-linux-gnu-
           
+          echo "=== Cleaning Workspace ==="
           make clean
           make mrproper
           
-          echo "=== Setting up Vendor Defconfig ==="
-          # Copy the out-of-tree vendor config into the standard kernel config directory
-          cp ../configs/vendor/Gta9pwifi_eur_open_defconfig arch/arm64/configs/custom_vendor_defconfig
+          echo "=== Locating and Setting up Vendor Defconfig ==="
+          # Use "find" to automatically locate the defconfig no matter what folder it is hiding in
+          DEFCONFIG_FILE=$(find . -name "Gta9pwifi_eur_open_defconfig" | head -n 1)
+          
+          if [ -z "$DEFCONFIG_FILE" ]; then
+            echo "Error: Gta9pwifi_eur_open_defconfig not found anywhere in the repository!"
+            exit 1
+          fi
+          
+          echo "Found defconfig at: $DEFCONFIG_FILE"
+          cp "$DEFCONFIG_FILE" arch/arm64/configs/custom_vendor_defconfig
           
           # Apply the configuration
           make custom_vendor_defconfig
@@ -55,5 +64,5 @@ jobs:
       - name: Upload vmlinux Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: vmlinux-stripped
+          name: SM-X210-vmlinux-stripped
           path: vmlinux
