@@ -31,7 +31,7 @@ jobs:
           chmod -R +x arch/arm64/kernel/vdso/ || true
           chmod +x scripts/config || true
           
-          # CLEAN FIX: Remove any manual KSU entries. CONFIG_KSU=y will handle inclusion automatically.
+          # CLEAN FIX: Remove manual KSU entries. CONFIG_KSU=y in defconfig handles this correctly.
           sed -i '/kernelsu/d' drivers/Makefile || true
           
           mkdir -p include/kernelsu
@@ -75,6 +75,9 @@ jobs:
           # === FINAL LINKER FIX ===
           # Remove tiny_sulog.o from the KSU Makefile so it doesn't double-link with supercalls.o
           sed -i 's/tiny_sulog\.o//g' drivers/kernelsu/Makefile || true
+          
+          # Remove problematic quoted strings from Makefiles that confuse the linker
+          sed -i 's|"drivers/kernelsu/"|drivers/kernelsu/|g' Makefile drivers/Makefile || true
 
       - name: ⚙️ Generate Kernel Configuration
         run: |
@@ -162,4 +165,3 @@ jobs:
           path: |
             Final_Kernel/TabA9Plus-KSU-Kernel.tar
             Final_Kernel/TabA9Plus-KSU-AnyKernel3.zip
-
