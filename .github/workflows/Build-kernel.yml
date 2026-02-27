@@ -40,17 +40,9 @@ jobs:
           make clean
           make mrproper
           
-          echo "=== Locating and Setting up Vendor Defconfig ==="
-          # Use "find" to automatically locate the defconfig no matter what folder it is hiding in
-          DEFCONFIG_FILE=$(find . -name "Gta9pwifi_eur_open_defconfig" | head -n 1)
-          
-          if [ -z "$DEFCONFIG_FILE" ]; then
-            echo "Error: Gta9pwifi_eur_open_defconfig not found anywhere in the repository!"
-            exit 1
-          fi
-          
-          echo "Found defconfig at: $DEFCONFIG_FILE"
-          cp "$DEFCONFIG_FILE" arch/arm64/configs/custom_vendor_defconfig
+          echo "=== Setting up Vendor Defconfig ==="
+          # Using the exact path and lowercase filename verified from your VS Code screenshot
+          cp arch/arm64/configs/vendor/gta9pwifi_eur_open_defconfig arch/arm64/configs/custom_vendor_defconfig
           
           # Apply the configuration
           make custom_vendor_defconfig
