@@ -1,60 +1,146 @@
-name: "SM-X210 KSU Build (Final)"
-
+name: Build Tab A9+ Custom Kernel (KSU)
 on:
   workflow_dispatch:
 
 jobs:
   build-kernel:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-20.04
+
     steps:
-      - name: Checkout Source Code
+      - name: 🛠️ Prepare Environment & Install Toolchain
+        run: |
+          export DEBIAN_FRONTEND=noninteractive
+          sudo apt-get update
+          sudo apt-get install -y tzdata git software-properties-common bc build-essential flex bison libssl-dev libelf-dev clang llvm lld gcc-aarch64-linux-gnu tar zip wget python3 cpio xz-utils ccache
+
+      - name: 📥 Checkout Source Code
         uses: actions/checkout@v4
 
-      - name: Setup Build Environment
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential bc gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi libssl-dev curl unzip flex bison
+      - name: 🗄️ Restore Compiler Cache
+        uses: actions/cache@v4
+        with:
+          path: .ccache
+          key: ksu-ccache-${{ github.run_id }}
+          restore-keys: |
+            ksu-ccache-
 
-      - name: Apply KernelSU Hotfixes
+      - name: 📁 Setup & Permissions
         run: |
-          echo "=== Patching KernelSU Source ==="
+          find . -type f -name "*.sh" -exec chmod +x {} + || true
+          chmod -R +x scripts/ || true
+          chmod -R +x arch/arm64/kernel/vdso/ || true
+          chmod +x scripts/config || true
           
-          # Fix the selinux.c include path
-          sed -i 's|#include "../ksu.h"|#include "ksu.h"|g' drivers/kernelsu/selinux/selinux.c
+          if ! grep -q "kernelsu" drivers/Makefile; then
+            echo 'obj-y += kernelsu/' >> drivers/Makefile
+          fi
           
-          # Fix the SIDTAB_HASH_BITS configuration error
-          echo "ccflags-y += -DCONFIG_SECURITY_SELINUX_SIDTAB_HASH_BITS=9" >> drivers/kernelsu/Makefile
-          
-          # Fix the strict-prototypes warnings to ensure a clean build
-          sed -i 's|void ksu_throne_tracker_init();|void ksu_throne_tracker_init(void);|g' drivers/kernelsu/throne_tracker.h
-          sed -i 's|void ksu_throne_tracker_exit();|void ksu_throne_tracker_exit(void);|g' drivers/kernelsu/throne_tracker.h
-          sed -i 's|void ksu_ksud_init();|void ksu_ksud_init(void);|g' drivers/kernelsu/ksud.h
-          sed -i 's|void ksu_ksud_exit();|void ksu_ksud_exit(void);|g' drivers/kernelsu/ksud.h
+          mkdir -p include/kernelsu
+          ln -sf ${GITHUB_WORKSPACE}/drivers/kernelsu ${GITHUB_WORKSPACE}/include/kernelsu || true
 
-      - name: Configure and Build vmlinux
+      - name: 🩹 Apply Deep Source Code Fixes
+        run: |
+          sed -i 's|register unsigned long current_stack_pointer asm ("sp");|/* Removed global sp */ #define current_stack_pointer ({ unsigned long sp; asm("mov %0, sp" : "=r"(sp)); sp; })|g' arch/arm64/include/asm/stack_pointer.h || true
+          sed -i 's|"brk %0" : : "I"|"brk %0" : : "n"|g' arch/arm64/include/asm/kgdb.h || true
+          ln -sf $(pwd)/arch/arm64/include/asm $(pwd)/include/asm || true
+          sed -i 's|#define TRACE_INCLUDE_PATH .|#define TRACE_INCLUDE_PATH ../../kernel/sched/walt|g' kernel/sched/walt/trace.h || true
+          
+          sed -i 's/static inline u32 current_sid(void)/static inline u32 ksu_current_sid_dummy(void)/g' drivers/kernelsu/selinux/selinux.h || true
+          sed -i '/extern unsigned long vdso_offset_/d' arch/arm64/include/asm/vdso.h || true
+          
+          mkdir -p drivers/input/touchscreen/focaltech_touch_spi/include/firmware
+          touch drivers/input/touchscreen/focaltech_touch_spi/include/firmware/fw_sample.i || true
+          sed -i 's/!!!current->seccomp.mode/0/g' drivers/kernelsu/app_profile.c || true
+          sed -i 's/current->seccomp.mode = 0;/\/\/current->seccomp.mode = 0;/g' drivers/kernelsu/app_profile.c || true
+          sed -i 's/current->seccomp.filter = NULL;/\/\/current->seccomp.filter = NULL;/g' drivers/kernelsu/app_profile.c || true
+          
+          # Fix KernelSU paths
+          sed -i 's|../ksu.h|ksu.h|g' drivers/kernelsu/selinux/selinux.c || true
+          sed -i 's|"inc/tcpci.h"|"tcpci.h"|g' drivers/usb/typec/P86801_tcpc/inc/pd_dpm_pdo_select.h || true
+
+      - name: ⚙️ Generate Kernel Configuration
         run: |
           export ARCH=arm64
-          export CROSS_COMPILE=aarch64-linux-gnu-
           
-          echo "=== Cleaning Workspace ==="
-          make clean
-          make mrproper
+          # Locate the defconfig and copy it to the standard directory
+          DEFCONFIG_FILE=$(find . -name "gta9pwifi_eur_open_defconfig" | head -n 1)
+          if [ -z "$DEFCONFIG_FILE" ]; then
+            echo "Error: Defconfig not found!"
+            exit 1
+          fi
+          cp "$DEFCONFIG_FILE" arch/arm64/configs/custom_vendor_defconfig
           
-          echo "=== Setting up Vendor Defconfig ==="
-          # Using the exact path and lowercase filename verified from your VS Code screenshot
-          cp arch/arm64/configs/vendor/gta9pwifi_eur_open_defconfig arch/arm64/configs/custom_vendor_defconfig
+          # Apply the config
+          make ARCH=arm64 HOSTCC=gcc CC=gcc custom_vendor_defconfig
           
-          # Apply the configuration
-          make custom_vendor_defconfig
-          
-          echo "=== Compiling vmlinux ==="
-          make -j$(nproc) vmlinux
-          
-          echo "=== Stripping Debug Symbols (Shrinking File Size) ==="
-          aarch64-linux-gnu-strip --strip-debug vmlinux
+          # Inject KSU and disable Knox features
+          ./scripts/config --file .config --disable SECURITY_DEFEX
+          ./scripts/config --file .config --disable SEC_RESTRICT_FORK
+          ./scripts/config --file .config --enable KSU
+          ./scripts/config --file .config --enable KSU_NEXT
+          ./scripts/config --file .config --enable KSU_NEXT_MANUAL_HOOK
+          make ARCH=arm64 HOSTCC=gcc CC=gcc olddefconfig
 
-      - name: Upload vmlinux Artifact
+      - name: 🔨 Resolve SELinux Headers
+        run: |
+          make ARCH=arm64 CC="clang --target=aarch64-linux-gnu" CROSS_COMPILE=aarch64-linux-gnu- HOSTCC=gcc CC_FOR_BUILD=gcc -j$(nproc --all) prepare
+          mkdir -p security/selinux/include
+          wget -q https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/selinux/flask.h -O flask.h || true
+          wget -q https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/selinux/av_permissions.h -O av_permissions.h || true
+          
+          echo '#ifndef SECINITSID_NUM' >> flask.h
+          echo '#define SECINITSID_NUM 27' >> flask.h
+          echo '#endif' >> flask.h
+          echo '#ifndef CONFIG_SECURITY_SELINUX_SIDTAB_HASH_BITS' >> flask.h
+          echo '#define CONFIG_SECURITY_SELINUX_SIDTAB_HASH_BITS 9' >> flask.h
+          echo '#endif' >> flask.h
+          
+          cp flask.h security/selinux/include/flask.h || true
+          cp av_permissions.h security/selinux/include/av_permissions.h || true
+          cp flask.h drivers/kernelsu/ || true
+          cp av_permissions.h drivers/kernelsu/ || true
+
+      - name: 🔨 Compile Kernel
+        run: |
+          export CCACHE_DIR=$GITHUB_WORKSPACE/.ccache
+          export CCACHE_EXEC=$(which ccache)
+          ccache -M 5G
+          
+          # Added 'Image' to the end of the make command to specify the output target
+          make ARCH=arm64 \
+          CC="ccache clang --target=aarch64-linux-gnu" \
+          REAL_CC="ccache clang --target=aarch64-linux-gnu" \
+          CROSS_COMPILE=aarch64-linux-gnu- \
+          HOSTCC="ccache gcc" \
+          CC_FOR_BUILD="ccache gcc" \
+          CLANG_TRIPLE=aarch64-linux-gnu- \
+          -j$(nproc --all) \
+          KCFLAGS="-I${GITHUB_WORKSPACE}/drivers/kernelsu -I${GITHUB_WORKSPACE}/security/selinux -I${GITHUB_WORKSPACE}/security/selinux/include -I${GITHUB_WORKSPACE}/drivers -Wno-error=frame-larger-than= -Wno-implicit-function-declaration -Wno-strict-prototypes -Wno-int-conversion -Wno-enum-conversion" \
+          Image
+          
+          ccache -s
+
+      - name: 📦 Package Output
+        run: |
+          mkdir -p Final_Kernel
+          cp arch/arm64/boot/Image Final_Kernel/ || true
+          cd Final_Kernel
+          
+          # Create Odin Tarball
+          tar -cvf TabA9Plus-KSU-Kernel.tar Image || true
+          
+          # Create Flashable Zip using AnyKernel3
+          git clone https://github.com/osm0sis/AnyKernel3.git
+          cd AnyKernel3
+          sed -i 's/do.devicecheck=1/do.devicecheck=0/g' anykernel.sh
+          sed -i 's/block=\/dev\/block\/bootdevice\/by-name\/boot;/block=auto;/g' anykernel.sh
+          cp ../Image .
+          zip -r9 ../TabA9Plus-KSU-AnyKernel3.zip * -x .git README.md *placeholder
+          
+      - name: 📤 Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: SM-X210-vmlinux-stripped
-          path: vmlinux
+          name: TabA9Plus-KSU-Kernel
+          path: |
+            Final_Kernel/TabA9Plus-KSU-Kernel.tar
+            Final_Kernel/TabA9Plus-KSU-AnyKernel3.zip
