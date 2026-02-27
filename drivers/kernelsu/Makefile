@@ -17,9 +17,10 @@ subdir-y += selinux
 # 3. Include Paths & Flags
 # $(src) points to drivers/kernelsu, $(srctree) is the root of the kernel
 ccflags-y += -I$(srctree)/security/selinux/include
-ccflags-y += -I$(srctree)/$(src)/kernel
 ccflags-y += -I$(srctree)/$(src)/selinux
 ccflags-y += -I$(srctree)/$(src)
+ccflags-y += -I$(src)/kernel
+
 
 # Critical Flags for KSU_NEXT
 ccflags-y += -DCONFIG_KSU_NEXT_MANUAL_HOOK
