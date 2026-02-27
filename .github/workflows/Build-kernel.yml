@@ -4,7 +4,7 @@ on:
 
 jobs:
   build-kernel:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-20.04
 
     steps:
       - name: 🛠️ Prepare Environment & Install Toolchain
@@ -53,6 +53,10 @@ jobs:
           sed -i 's/!!!current->seccomp.mode/0/g' drivers/kernelsu/app_profile.c || true
           sed -i 's/current->seccomp.mode = 0;/\/\/current->seccomp.mode = 0;/g' drivers/kernelsu/app_profile.c || true
           sed -i 's/current->seccomp.filter = NULL;/\/\/current->seccomp.filter = NULL;/g' drivers/kernelsu/app_profile.c || true
+          
+          # Fix KernelSU Version Variables (Targeted to the kernel subfolder)
+          sed -i 's/#define KERNEL_SU_VERSION KSU_VERSION/#define KERNEL_SU_VERSION 11938/g' drivers/kernelsu/kernel/ksu.h || true
+          sed -i 's/#define KERNEL_SU_VERSION_TAG KSU_VERSION_TAG/#define KERNEL_SU_VERSION_TAG "v1.0.0"/g' drivers/kernelsu/kernel/ksu.h || true
           
           # Fix KernelSU paths 
           sed -i 's|#include "../ksu.h"|#include "../kernel/ksu.h"|g' drivers/kernelsu/selinux/selinux.c || true
