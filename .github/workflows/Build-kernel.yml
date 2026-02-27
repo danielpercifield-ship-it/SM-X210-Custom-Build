@@ -29,7 +29,7 @@ jobs:
           chmod -R +x scripts/
           find . -type f -name "*.sh" -exec chmod +x {} + || true
           
-          # Clean slate inclusion
+          # CLEAN FIX: Ensure kernelsu is included only once
           sed -i '/kernelsu/d' drivers/Makefile
           echo "obj-y += kernelsu/" >> drivers/Makefile
 
@@ -45,7 +45,7 @@ jobs:
           sed -i 's/static inline u32 current_sid(void)/static inline u32 ksu_current_sid_dummy(void)/g' drivers/kernelsu/selinux/selinux.h || true
           sed -i '/extern unsigned long vdso_offset_/d' arch/arm64/include/asm/vdso.h || true
           
-          # FIX: Redirect ss/policydb.h to the absolute security path
+          # Fix ss/policydb.h redirection
           sed -i 's|#include "ss/policydb.h"|#include "../../security/selinux/ss/policydb.h"|g' drivers/kernelsu/kernel_compat.h || true
           
           # Focaltech & App Profile Fixes
@@ -58,6 +58,9 @@ jobs:
           # Fix Manual Hook path in input.c
           sed -i 's|<kernelsu/kernel/ksu.h>|"../kernelsu/kernel/ksu.h"|g' drivers/input/input.c || true
           
+          # USB-C Header Path Fix (The error you just hit)
+          sed -i 's|"inc/tcpci.h"|"tcpci.h"|g' drivers/usb/typec/P86801_tcpc/inc/pd_dpm_pdo_select.h || true
+          
           # Fix KernelSU Version Variables
           sed -i 's/#define KERNEL_SU_VERSION KSU_VERSION/#define KERNEL_SU_VERSION 11938/g' drivers/kernelsu/kernel/ksu.h || true
           sed -i 's/#define KERNEL_SU_VERSION_TAG KSU_VERSION_TAG/#define KERNEL_SU_VERSION_TAG "v1.0.0"/g' drivers/kernelsu/kernel/ksu.h || true
@@ -67,7 +70,7 @@ jobs:
           sed -i 's|#include "../kernksu.h"|#include "../kernel/ksu.h"|g' drivers/kernelsu/selinux/selinux.c || true
           sed -i 's|#include "ksu.h"|#include "../kernel/ksu.h"|g' drivers/kernelsu/selinux/selinux.c || true
           
-          # Restore rules.c SELinux fixes
+          # Restore rules.c SELinux struct fixes
           sed -i 's|db = \&policydb;|db = \&selinux_state.ss->policydb;|g' drivers/kernelsu/selinux/rules.c || true
           sed -i 's|selinux_status_update_policyload(0);|selinux_status_update_policyload(\&selinux_state, 0);|g' drivers/kernelsu/selinux/rules.c || true
           sed -i 's|selinux_status_update_policyload(seqno);|selinux_status_update_policyload(\&selinux_state, seqno);|g' drivers/kernelsu/selinux/rules.c || true
