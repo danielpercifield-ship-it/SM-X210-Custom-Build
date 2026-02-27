@@ -29,9 +29,8 @@ jobs:
           chmod -R +x scripts/
           find . -type f -name "*.sh" -exec chmod +x {} + || true
           
-          # Clean slate: Safely add KSU to the drivers build list
-          sed -i '/kernelsu/d' drivers/Makefile || true
-          echo "obj-y += kernelsu/" >> drivers/Makefile
+          # Clean slate: Safely add KSU to the drivers build list if it's missing
+          grep -q "kernelsu" drivers/Makefile || echo "obj-\$(CONFIG_KSU) += kernelsu/" >> drivers/Makefile
 
       - name: 🩹 Apply Deep Source Code Fixes
         run: |
@@ -60,7 +59,6 @@ jobs:
           sed -i 's|"inc/tcpci.h"|"tcpci.h"|g' drivers/usb/typec/P86801_tcpc/inc/pd_dpm_pdo_select.h || true
           
           # FORCE VERSION DEFINES DIRECTLY INTO THE C FILE
-          # This guarantees the compiler sees them and stops the "undeclared identifier" error
           sed -i '1i #define KSU_VERSION 11938\n#define KSU_VERSION_TAG "v1.0.0"\n#define KERNEL_SU_VERSION 11938\n#define KERNEL_SU_VERSION_TAG "v1.0.0"' drivers/kernelsu/supercalls.c || true
           
           # Fix KernelSU Include Path conflicts
@@ -77,8 +75,13 @@ jobs:
           sed -i '1i #include <linux/types.h>\n#include <linux/kernel.h>\n#include <linux/spinlock.h>\n#include <linux/slab.h>\n#include <linux/ktime.h>\n#include <linux/cred.h>' drivers/kernelsu/tiny_sulog.c || true
 
           # === THE TRUE LINKER FIX ===
-          # Instead of destroying the Makefile, we just delete the ONE line causing the double-link
-          sed -i '/tiny_sulog/d' drivers/kernelsu/Makefile || true
+          # Stop tiny_sulog from double-compiling by surgically removing it from official KSU build files
+          find drivers/kernelsu -type f -name "Makefile" -exec sed -i '/tiny_sulog\.o/d' {} + || true
+          find drivers/kernelsu -type f -name "Kbuild" -exec sed -i '/tiny_sulog\.o/d' {} + || true
+          
+          # Remove literal quotes from any Makefile paths that confuse the linker
+          find . -type f \( -name "Makefile" -o -name "Kbuild" \) -exec sed -i 's|"drivers/kernelsu/"|drivers/kernelsu/|g' {} + || true
+          find . -type f \( -name "Makefile" -o -name "Kbuild" \) -exec sed -i 's|"kernelsu/"|kernelsu/|g' {} + || true
 
       - name: ⚙️ Generate Kernel Configuration
         run: |
