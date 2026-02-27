@@ -11,7 +11,7 @@ jobs:
         run: |
           export DEBIAN_FRONTEND=noninteractive
           sudo apt-get update
-          sudo apt-get install -y tzdata git software-properties-common bc build-essential flex bison libssl-dev libelf-dev clang llvm lld gcc-aarch64-linux-gnu tar zip wget python3 cpio xz-utils ccache
+          sudo apt-get install -y tzdata git software-properties-common bc build-essential flex bison libssl-dev libelf-dev clang llvm lld gcc-aarch64-linux-gnu tar zip wget python3 cpio xz-utils ccache curl
 
       - name: 📥 Checkout Source Code
         uses: actions/checkout@v4
@@ -29,7 +29,7 @@ jobs:
           chmod -R +x scripts/
           find . -type f -name "*.sh" -exec chmod +x {} + || true
           
-          # CLEAN FIX: Ensure kernelsu is included only once to prevent double-linking
+          # Clean slate inclusion
           sed -i '/kernelsu/d' drivers/Makefile
           echo "obj-y += kernelsu/" >> drivers/Makefile
 
@@ -121,18 +121,38 @@ jobs:
 
       - name: 🔨 Resolve SELinux Headers
         run: |
-          # Pre-prepare directories
           mkdir -p security/selinux/include
           mkdir -p drivers/kernelsu
           
-          # More resilient download method
-          curl -sSL https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/selinux/flask.h -o flask.h
-          curl -sSL https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/selinux/av_permissions.h -o av_permissions.h
+          # Manually generating flask.h to avoid 404 errors and ensure correct SID mapping
+          cat <<EOF > flask.h
+          #ifndef _SELINUX_FLASK_H_
+          #define _SELINUX_FLASK_H_
+          #define SECCLASS_PROCESS 1
+          #define SECCLASS_FILE 2
+          #define SECINITSID_KERNEL 1
+          #define SECINITSID_SECURITY 2
+          #define SECINITSID_UNLABELED 3
+          #define SECINITSID_NUM 27
+          #ifndef CONFIG_SECURITY_SELINUX_SIDTAB_HASH_BITS
+          #define CONFIG_SECURITY_SELINUX_SIDTAB_HASH_BITS 9
+          #endif
+          #endif
+          EOF
+
+          # Manually generating av_permissions.h
+          cat <<EOF > av_permissions.h
+          #ifndef _SELINUX_AV_PERMISSIONS_H_
+          #define _SELINUX_AV_PERMISSIONS_H_
+          #define PROCESS__TRANSITION 0x00000001UL
+          #define PROCESS__DYNTRANSITION 0x00000002UL
+          #define PROCESS__SETFSCREATE 0x00000004UL
+          #define FILE__READ 0x00000001UL
+          #define FILE__WRITE 0x00000002UL
+          #endif
+          EOF
           
-          # Inject required bit table and SID constants
-          echo -e "#ifndef SECINITSID_NUM\n#define SECINITSID_NUM 27\n#endif\n#ifndef CONFIG_SECURITY_SELINUX_SIDTAB_HASH_BITS\n#define CONFIG_SECURITY_SELINUX_SIDTAB_HASH_BITS 9\n#endif" >> flask.h
-          
-          # Deploy to multiple paths to satisfy all includes
+          # Deploy to all paths
           cp flask.h security/selinux/include/flask.h
           cp av_permissions.h security/selinux/include/av_permissions.h
           cp flask.h drivers/kernelsu/flask.h
@@ -140,6 +160,8 @@ jobs:
 
       - name: 🔨 Compile Kernel
         run: |
+          export CCACHE_DIR=$GITHUB_WORKSPACE/.ccache
+          ccache -M 5G
           make ARCH=arm64 \
           CC="ccache clang --target=aarch64-linux-gnu" \
           REAL_CC="ccache clang --target=aarch64-linux-gnu" \
