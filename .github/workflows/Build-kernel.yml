@@ -26,16 +26,15 @@ jobs:
 
       - name: 📁 Setup & Permissions
         run: |
+          # Fix script permissions
+          chmod -R +x scripts/
           find . -type f -name "*.sh" -exec chmod +x {} + || true
-          chmod -R +x scripts/ || true
-          chmod -R +x arch/arm64/kernel/vdso/ || true
-          chmod +x scripts/config || true
           
-          # CLEAN FIX: Remove manual KSU entries to prevent double-linking.
-          sed -i '/kernelsu/d' drivers/Makefile || true
-          
-          mkdir -p include/kernelsu
-          ln -sf ${GITHUB_WORKSPACE}/drivers/kernelsu ${GITHUB_WORKSPACE}/include/kernelsu || true
+          # INTEGRATION FIX:
+          # Ensure drivers/Makefile points to kernelsu correctly.
+          # We delete any existing line and add it properly at the end.
+          sed -i '/kernelsu/d' drivers/Makefile
+          echo "obj-y += kernelsu/" >> drivers/Makefile
 
       - name: 🩹 Apply Deep Source Code Fixes
         run: |
@@ -78,6 +77,46 @@ jobs:
           # Aggressively remove tiny_sulog.o to stop multiple definition errors
           sed -i 's/tiny_sulog.o//g' drivers/kernelsu/Makefile || true
           sed -i 's/tiny_sulog\.o//g' drivers/kernelsu/Makefile || true
+     
+      - name: 🛠️ Force KernelSU Makefile
+        run: |
+          cat <<EOF > drivers/kernelsu/Makefile
+          # Objects to build
+          obj-y += kernel/ksu.o
+          obj-y += allowlist.o
+          obj-y += apk_sign.o
+          obj-y += app_profile.o
+          obj-y += extras.o
+          obj-y += feature.o
+          obj-y += file_wrapper.o
+          obj-y += kernel_compat.o
+          obj-y += kernel_umount.o
+          obj-y += ksud.o
+          obj-y += lsm_hooks.o
+          obj-y += seccomp_cache.o
+          obj-y += setuid_hook.o
+          obj-y += su_mount_ns.o
+          obj-y += sucompat.o
+          obj-y += supercalls.o
+          obj-y += throne_tracker.o
+          obj-y += util.o
+          obj-y += selinux/rules.o
+          obj-y += selinux/selinux.o
+          obj-y += selinux/sepolicy.o
+
+          # Header Paths
+          ccflags-y += -I\$(srctree)/drivers/kernelsu/kernel
+          ccflags-y += -I\$(srctree)/security/selinux/include
+          
+          # Flags for Manual Hook and Signature
+          ccflags-y += -DCONFIG_KSU_NEXT_MANUAL_HOOK
+          ccflags-y += -Wno-strict-prototypes -Wno-implicit-function-declaration
+          
+          # V2 Signature Hash (Matches Official Manager)
+          ccflags-y += -DKSU_NEXT_EXPECTED_SIZE=0x3e6
+          ccflags-y += -DKSU_NEXT_EXPECTED_HASH=\\"79e590113c4c4c0c222978e413a5faa801666957b1212a328e46c00c69821bf7\\"
+          EOF
+
 
       - name: ⚙️ Generate Kernel Configuration
         run: |
@@ -123,23 +162,15 @@ jobs:
 
       - name: 🔨 Compile Kernel
         run: |
-          export CCACHE_DIR=$GITHUB_WORKSPACE/.ccache
-          export CCACHE_EXEC=$(which ccache)
-          ccache -M 5G
-          
-          # KCFLAGS updated to force the compiler to ignore Samsung's warnings
+          # Note the relative paths for includes
           make ARCH=arm64 \
           CC="ccache clang --target=aarch64-linux-gnu" \
           REAL_CC="ccache clang --target=aarch64-linux-gnu" \
           CROSS_COMPILE=aarch64-linux-gnu- \
           HOSTCC="ccache gcc" \
-          CC_FOR_BUILD="ccache gcc" \
-          CLANG_TRIPLE=aarch64-linux-gnu- \
           -j$(nproc --all) \
-          KCFLAGS="-I${GITHUB_WORKSPACE}/drivers/kernelsu -I${GITHUB_WORKSPACE}/security/selinux -I${GITHUB_WORKSPACE}/security/selinux/include -I${GITHUB_WORKSPACE}/drivers -Wno-error=frame-larger-than= -Wno-implicit-function-declaration -Wno-strict-prototypes -Wno-int-conversion -Wno-enum-conversion -Wno-implicit-int -Wno-error=implicit-int -Wno-unused-but-set-variable -Wno-error=unused-but-set-variable" \
+          KCFLAGS="-Idrivers/kernelsu -Idrivers/kernelsu/kernel -Isecurity/selinux/include -Wno-error=frame-larger-than= -Wno-implicit-function-declaration -Wno-strict-prototypes" \
           Image
-          
-          ccache -s
 
       - name: 📦 Package Output
         run: |
