@@ -24,16 +24,17 @@ jobs:
           restore-keys: |
             ksu-ccache-
 
-      - name: 📥 Integrate KernelSU-Next (Moved to fs/)
+      - name: 📥 Integrate KernelSU-Next
         run: |
-          # Delete any corrupted existing folders
           rm -rf drivers/kernelsu
           rm -rf fs/kernelsu
           
-          # CURE ROOT REPO POISONING
+          # === REPAIR ACCIDENTAL MAKEFILE DELETION ===
           if ! grep -q "kernel/ certs/ mm/" Makefile; then
               sed -i '/core-y.*:=.*init/a core-y += kernel/ certs/ mm/ fs/ ipc/ security/ crypto/ block/' Makefile
           fi
+          
+          # Safely scrub any lingering quoted KSU strings from Makefiles
           sed -i 's|"drivers/kernelsu/"||g' Makefile || true
           sed -i 's|drivers/kernelsu/||g' Makefile || true
           sed -i 's|fs/kernelsu/||g' Makefile || true
@@ -45,13 +46,12 @@ jobs:
           find . -name "Kconfig" -exec sed -i 's|drivers/kernelsu/Kconfig|fs/kernelsu/Kconfig|g' {} + || true
           sed -i '/kernelsu/d' drivers/Makefile || true
           
-          # Clone KSU-Next legacy into TEMP
+          # Clone KSU-Next legacy
           git clone -b legacy https://github.com/KernelSU-Next/KernelSU-Next /tmp/ksun
           
-          # === THE LINKER FIX: Move KSU to the filesystem folder ===
+          # Move KSU to the filesystem folder for Linker Order
           mv /tmp/ksun/kernel fs/kernelsu
           
-          # Add to fs/Makefile cleanly
           sed -i '/kernelsu/d' fs/Makefile || true
           echo "obj-y += kernelsu/" >> fs/Makefile
 
@@ -67,11 +67,10 @@ jobs:
           sed -i 's/static inline u32 current_sid(void)/static inline u32 ksu_current_sid_dummy(void)/g' fs/kernelsu/selinux/selinux.h || true
           sed -i 's|#include "ss/policydb.h"|#include "../../security/selinux/ss/policydb.h"|g' fs/kernelsu/kernel_compat.h || true
           
-          # === THE CARPET-BOMB PATH SHIFT ===
-          # 1. Fix the driver input file
-          sed -i 's|#include.*ksu.h.*|#include "../../fs/kernelsu/ksu.h"|g' drivers/input/input.c || true
-          # 2. Blanket overwrite EVERY filesystem file that has a KSU hook to use the correct local path
-          find fs/ -type f -name "*.c" -exec sed -i 's|#include.*ksu.h.*|#include "kernelsu/ksu.h"|g' {} + || true
+          # === THE CARPET-BOMB PATH SHIFT (SAFE VERSION) ===
+          sed -i 's|.*kernelsu.*ksu.h.*|#include "../../fs/kernelsu/ksu.h"|g' drivers/input/input.c || true
+          # Exclude the fs/kernelsu folder from the find command so we don't sabotage KSU itself
+          find fs/ -type f -name "*.c" ! -path "fs/kernelsu/*" -exec sed -i 's|.*kernelsu.*ksu.h.*|#include "kernelsu/ksu.h"|g' {} + || true
           
           # ROBUST SECCOMP STRIP
           sed -i 's/current->seccomp\.mode/0/g' fs/kernelsu/app_profile.c || true
@@ -86,15 +85,24 @@ jobs:
           # Fix USB-C header path
           find drivers/usb/typec -name "pd_dpm_pdo_select.h" -exec sed -i 's|"inc/tcpci.h"|"tcpci.h"|g' {} + || true
 
-          # Force version defines directly into supercalls.c
+          # Force version defines
           sed -i '1i #define KSU_VERSION 11938\n#define KSU_VERSION_TAG "v1.0.0"\n#define KERNEL_SU_VERSION 11938\n#define KERNEL_SU_VERSION_TAG "v1.0.0"' fs/kernelsu/supercalls.c || true
 
           # Eradicate double linking
           sed -i '/tiny_sulog\.o/d' fs/kernelsu/Makefile || true
           
           # === SAMSUNG MISSING SYMBOL STUBS ===
-          # Inject empty functions into the core initialization file to satisfy the linker
-          echo -e "\nvoid handle_decomp_fail(void) {}\nvoid md_dump_slabinfo(void) {}\n" >> init/main.c
+          echo -e "\nvoid handle_decomp_fail(void) {}\nEXPORT_SYMBOL_GPL(handle_decomp_fail);\nvoid md_dump_slabinfo(void) {}\nEXPORT_SYMBOL_GPL(md_dump_slabinfo);\n" >> fs/kernelsu/ksu.c
+
+      - name: 🔑 Force Export SELinux Symbols
+        run: |
+          [ -f security/selinux/hooks.c ] && echo -e "\n#include <linux/export.h>\nEXPORT_SYMBOL_GPL(selinux_state);\nEXPORT_SYMBOL_GPL(selinux_blob_sizes);" >> security/selinux/hooks.c
+          [ -f security/selinux/ss/hashtab.c ] && echo -e "\n#include <linux/export.h>\nEXPORT_SYMBOL_GPL(hashtab_search);\nEXPORT_SYMBOL_GPL(hashtab_insert);" >> security/selinux/ss/hashtab.c
+          [ -f security/selinux/ss/ebitmap.c ] && echo -e "\n#include <linux/export.h>\nEXPORT_SYMBOL_GPL(ebitmap_set_bit);\nEXPORT_SYMBOL_GPL(ebitmap_get_bit);" >> security/selinux/ss/ebitmap.c
+          [ -f security/selinux/ss/avtab.c ] && echo -e "\n#include <linux/export.h>\nEXPORT_SYMBOL_GPL(avtab_search_node);\nEXPORT_SYMBOL_GPL(avtab_search_node_next);\nEXPORT_SYMBOL_GPL(avtab_insert_nonunique);" >> security/selinux/ss/avtab.c
+          [ -f security/selinux/avc.c ] && echo -e "\n#include <linux/export.h>\nEXPORT_SYMBOL_GPL(avc_ss_reset);" >> security/selinux/avc.c
+          [ -f security/selinux/netlink.c ] && echo -e "\n#include <linux/export.h>\nEXPORT_SYMBOL_GPL(selnl_notify_policyload);" >> security/selinux/netlink.c
+          [ -f security/selinux/status.c ] && echo -e "\n#include <linux/export.h>\nEXPORT_SYMBOL_GPL(selinux_status_update_policyload);" >> security/selinux/status.c
 
       - name: ⚙️ Generate Kernel Configuration
         run: |
@@ -114,6 +122,12 @@ jobs:
           ./scripts/config --file .config --enable KSU
           ./scripts/config --file .config --enable KSU_NEXT
           ./scripts/config --file .config --enable KSU_NEXT_MANUAL_HOOK
+          
+          # Force Enable SELinux in Config
+          ./scripts/config --file .config --enable SECURITY_SELINUX
+          ./scripts/config --file .config --enable SECURITY_SELINUX_BOOTPARAM
+          ./scripts/config --file .config --disable SECURITY_SELINUX_DISABLE
+          
           # Disable Samsung specific security that blocks KSU
           ./scripts/config --file .config --disable SECURITY_DEFEX
           ./scripts/config --file .config --disable SEC_RESTRICT_FORK
