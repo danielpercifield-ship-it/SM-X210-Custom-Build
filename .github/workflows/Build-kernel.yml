@@ -11,7 +11,6 @@ jobs:
         run: |
           export DEBIAN_FRONTEND=noninteractive
           sudo apt-get update
-          # Added dos2unix to fix the Windows line-ending formatting issues
           sudo apt-get install -y git bc build-essential flex bison libssl-dev libelf-dev clang llvm lld gcc-aarch64-linux-gnu tar zip wget python3 cpio xz-utils ccache curl dos2unix
 
       - name: 📥 Checkout Kernel Source
@@ -42,6 +41,10 @@ jobs:
           # Architecture Fixes
           sed -i 's|register unsigned long current_stack_pointer asm ("sp");|/* Removed global sp */ #define current_stack_pointer ({ unsigned long sp; asm("mov %0, sp" : "=r"(sp)); sp; })|g' arch/arm64/include/asm/stack_pointer.h || true
           sed -i 's|"brk %0" : : "I"|"brk %0" : : "n"|g' arch/arm64/include/asm/kgdb.h || true
+          
+          # === THE BULLETPROOF WALT TRACE FIX ===
+          # Use wildcards to catch and replace the macro regardless of Samsung's trailing spaces
+          sed -i 's|.*#define TRACE_INCLUDE_PATH.*|#define TRACE_INCLUDE_PATH ../../kernel/sched/walt|g' kernel/sched/walt/trace.h || true
           
           # Fix SELinux includes in KSU
           sed -i 's/static inline u32 current_sid(void)/static inline u32 ksu_current_sid_dummy(void)/g' drivers/kernelsu/selinux/selinux.h || true
@@ -74,7 +77,6 @@ jobs:
           # Failsafe for the Kconfig ghost error
           touch drivers/kernelsu/Kconfig
           
-          # === THE FIX: FIND AND COPY DEFCONFIG ===
           # Find the actual defconfig path and explicitly copy it to the standard arch folder
           DEFCONFIG_FILE=$(find . -name "gta9pwifi_eur_open_defconfig" | head -n 1)
           cp "$DEFCONFIG_FILE" arch/arm64/configs/gta9pwifi_eur_open_defconfig
@@ -116,54 +118,4 @@ jobs:
           #ifndef _SELINUX_AV_PERMISSIONS_H_
           #define _SELINUX_AV_PERMISSIONS_H_
           #define PROCESS__TRANSITION 0x00000001UL
-          #define PROCESS__DYNTRANSITION 0x00000002UL
-          #define PROCESS__SETFSCREATE 0x00000004UL
-          #define FILE__READ 0x00000001UL
-          #define FILE__WRITE 0x00000002UL
-          #endif
-          EOF
-          
-          cp security/selinux/include/flask.h drivers/kernelsu/flask.h
-          cp security/selinux/include/av_permissions.h drivers/kernelsu/av_permissions.h
-
-      - name: 🔨 Compile Kernel
-        run: |
-          export CCACHE_DIR=$GITHUB_WORKSPACE/.ccache
-          ccache -M 5G
-          
-          make ARCH=arm64 \
-          CC="ccache clang --target=aarch64-linux-gnu" \
-          CROSS_COMPILE=aarch64-linux-gnu- \
-          LD=ld.lld \
-          AR=llvm-ar \
-          NM=llvm-nm \
-          OBJCOPY=llvm-objcopy \
-          OBJDUMP=llvm-objdump \
-          STRIP=llvm-strip \
-          HOSTCC=gcc \
-          -j$(nproc --all) \
-          KCFLAGS="-Wno-error=implicit-function-declaration -Wno-error=implicit-int -Wno-error=int-conversion -Wno-error=unused-but-set-variable -Isecurity/selinux/include" \
-          Image
-
-      - name: 📦 Package Output
-        run: |
-          mkdir -p Final_Kernel
-          if [ -f arch/arm64/boot/Image ]; then
-            cp arch/arm64/boot/Image Final_Kernel/
-            echo "Build Success"
-          else
-            echo "Build Failed"
-            exit 1
-          fi
-          
-          # Create Flashable Zip (AnyKernel3)
-          git clone https://github.com/osm0sis/AnyKernel3.git
-          sed -i 's/do.devicecheck=1/do.devicecheck=0/g' AnyKernel3/anykernel.sh
-          cp Final_Kernel/Image AnyKernel3/
-          cd AnyKernel3 && zip -r9 ../TabA9Plus-KSU-Kernel.zip *
-
-      - name: 📤 Upload Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: TabA9Plus-Kernel
-          path: TabA9Plus-KSU-Kernel.zip
+          #define PROCESS__DYN
