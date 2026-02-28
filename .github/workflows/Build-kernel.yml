@@ -67,9 +67,8 @@ jobs:
           sed -i 's/static inline u32 current_sid(void)/static inline u32 ksu_current_sid_dummy(void)/g' fs/kernelsu/selinux/selinux.h || true
           sed -i 's|#include "ss/policydb.h"|#include "../../security/selinux/ss/policydb.h"|g' fs/kernelsu/kernel_compat.h || true
           
-          # === THE CARPET-BOMB PATH SHIFT (SAFE VERSION) ===
+          # THE CARPET-BOMB PATH SHIFT
           sed -i 's|.*kernelsu.*ksu.h.*|#include "../../fs/kernelsu/ksu.h"|g' drivers/input/input.c || true
-          # Exclude the fs/kernelsu folder from the find command so we don't sabotage KSU itself
           find fs/ -type f -name "*.c" ! -path "fs/kernelsu/*" -exec sed -i 's|.*kernelsu.*ksu.h.*|#include "kernelsu/ksu.h"|g' {} + || true
           
           # ROBUST SECCOMP STRIP
@@ -96,13 +95,14 @@ jobs:
 
       - name: 🔑 Force Export SELinux Symbols
         run: |
-          [ -f security/selinux/hooks.c ] && echo -e "\n#include <linux/export.h>\nEXPORT_SYMBOL_GPL(selinux_state);\nEXPORT_SYMBOL_GPL(selinux_blob_sizes);" >> security/selinux/hooks.c
-          [ -f security/selinux/ss/hashtab.c ] && echo -e "\n#include <linux/export.h>\nEXPORT_SYMBOL_GPL(hashtab_search);\nEXPORT_SYMBOL_GPL(hashtab_insert);" >> security/selinux/ss/hashtab.c
-          [ -f security/selinux/ss/ebitmap.c ] && echo -e "\n#include <linux/export.h>\nEXPORT_SYMBOL_GPL(ebitmap_set_bit);\nEXPORT_SYMBOL_GPL(ebitmap_get_bit);" >> security/selinux/ss/ebitmap.c
-          [ -f security/selinux/ss/avtab.c ] && echo -e "\n#include <linux/export.h>\nEXPORT_SYMBOL_GPL(avtab_search_node);\nEXPORT_SYMBOL_GPL(avtab_search_node_next);\nEXPORT_SYMBOL_GPL(avtab_insert_nonunique);" >> security/selinux/ss/avtab.c
-          [ -f security/selinux/avc.c ] && echo -e "\n#include <linux/export.h>\nEXPORT_SYMBOL_GPL(avc_ss_reset);" >> security/selinux/avc.c
-          [ -f security/selinux/netlink.c ] && echo -e "\n#include <linux/export.h>\nEXPORT_SYMBOL_GPL(selnl_notify_policyload);" >> security/selinux/netlink.c
-          [ -f security/selinux/status.c ] && echo -e "\n#include <linux/export.h>\nEXPORT_SYMBOL_GPL(selinux_status_update_policyload);" >> security/selinux/status.c
+          # The || true prevents Bash from crashing if Samsung deleted the file
+          [ -f security/selinux/hooks.c ] && echo -e "\n#include <linux/export.h>\nEXPORT_SYMBOL_GPL(selinux_state);\nEXPORT_SYMBOL_GPL(selinux_blob_sizes);" >> security/selinux/hooks.c || true
+          [ -f security/selinux/ss/hashtab.c ] && echo -e "\n#include <linux/export.h>\nEXPORT_SYMBOL_GPL(hashtab_search);\nEXPORT_SYMBOL_GPL(hashtab_insert);" >> security/selinux/ss/hashtab.c || true
+          [ -f security/selinux/ss/ebitmap.c ] && echo -e "\n#include <linux/export.h>\nEXPORT_SYMBOL_GPL(ebitmap_set_bit);\nEXPORT_SYMBOL_GPL(ebitmap_get_bit);" >> security/selinux/ss/ebitmap.c || true
+          [ -f security/selinux/ss/avtab.c ] && echo -e "\n#include <linux/export.h>\nEXPORT_SYMBOL_GPL(avtab_search_node);\nEXPORT_SYMBOL_GPL(avtab_search_node_next);\nEXPORT_SYMBOL_GPL(avtab_insert_nonunique);" >> security/selinux/ss/avtab.c || true
+          [ -f security/selinux/avc.c ] && echo -e "\n#include <linux/export.h>\nEXPORT_SYMBOL_GPL(avc_ss_reset);" >> security/selinux/avc.c || true
+          [ -f security/selinux/netlink.c ] && echo -e "\n#include <linux/export.h>\nEXPORT_SYMBOL_GPL(selnl_notify_policyload);" >> security/selinux/netlink.c || true
+          [ -f security/selinux/status.c ] && echo -e "\n#include <linux/export.h>\nEXPORT_SYMBOL_GPL(selinux_status_update_policyload);" >> security/selinux/status.c || true
 
       - name: ⚙️ Generate Kernel Configuration
         run: |
