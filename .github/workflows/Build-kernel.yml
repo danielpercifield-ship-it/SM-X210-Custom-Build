@@ -41,10 +41,15 @@ jobs:
           sed -i 's/""//g' Makefile || true
           sed -i 's/""//g' arch/arm64/Makefile || true
           
+          # === THE FIX: UPDATE OLD KCONFIG COMMITS ===
+          # Find any old references to drivers/kernelsu and shift them to fs/kernelsu
+          find . -name "Kconfig" -exec sed -i 's|drivers/kernelsu/Kconfig|fs/kernelsu/Kconfig|g' {} + || true
+          sed -i '/kernelsu/d' drivers/Makefile || true
+          
           # Clone KSU-Next legacy into TEMP
           git clone -b legacy https://github.com/KernelSU-Next/KernelSU-Next /tmp/ksun
           
-          # === THE LINKER FIX: Move KSU to the filesystem folder ===
+          # Move ONLY the actual kernel module folder to the correct filesystem path
           mv /tmp/ksun/kernel fs/kernelsu
           
           # Add to fs/Makefile cleanly
@@ -89,7 +94,7 @@ jobs:
           # Eradicate double linking
           sed -i '/tiny_sulog\.o/d' fs/kernelsu/Makefile || true
           
-          # === SAMSUNG MISSING SYMBOL STUBS (Working!) ===
+          # === SAMSUNG MISSING SYMBOL STUBS ===
           # Inject empty functions into the core initialization file to satisfy the linker
           echo -e "\nvoid handle_decomp_fail(void) {}\nvoid md_dump_slabinfo(void) {}\n" >> init/main.c
 
