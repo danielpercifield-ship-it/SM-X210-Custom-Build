@@ -56,7 +56,11 @@ jobs:
           sed -i 's|#include "ss/policydb.h"|#include "../../security/selinux/ss/policydb.h"|g' drivers/kernelsu/kernel_compat.h || true
           
           # === FIX 1: THE GLOBAL KSU PATH SHIFT ===
-          # This scans all hook locations and fixes the missing /kernel/ folder in the include path
+          # Force input.c to use local quotes instead of system angle brackets
+          sed -i 's|<kernelsu/ksu.h>|"../kernelsu/ksu.h"|g' drivers/input/input.c || true
+          sed -i 's|<kernelsu/kernel/ksu.h>|"../kernelsu/ksu.h"|g' drivers/input/input.c || true
+          
+          # Fix the missing /kernel/ folder in the include path everywhere else
           find drivers/input fs kernel -type f -name "*.c" -exec sed -i 's|kernelsu/kernel/ksu.h|kernelsu/ksu.h|g' {} + || true
           
           # === FIX 2: ROBUST SECCOMP STRIP ===
@@ -184,3 +188,4 @@ jobs:
         with:
           name: TabA9Plus-Kernel
           path: TabA9Plus-KSU-Kernel.zip
+
