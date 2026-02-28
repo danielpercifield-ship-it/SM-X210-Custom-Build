@@ -26,29 +26,24 @@ jobs:
 
       - name: 📥 Integrate KernelSU-Next
         run: |
-          # Delete the corrupted existing folder in your repo first
           rm -rf drivers/kernelsu
           
           # === REPAIR ACCIDENTAL MAKEFILE DELETION ===
-          # If the core-y line was accidentally deleted from the repo, this forcefully restores it
           if ! grep -q "kernel/ certs/ mm/" Makefile; then
               sed -i '/core-y.*:=.*init/a core-y += kernel/ certs/ mm/ fs/ ipc/ security/ crypto/ block/' Makefile
           fi
           
-          # Destroy any lingering quoted strings in the top-level Makefiles safely
+          # Safely scrub any lingering quoted KSU strings from Makefiles
           sed -i 's|"drivers/kernelsu/"||g' Makefile || true
           sed -i 's|drivers/kernelsu/||g' Makefile || true
           sed -i 's|kernelsu/||g' Makefile || true
           sed -i 's/""//g' Makefile || true
           sed -i 's/""//g' arch/arm64/Makefile || true
           
-          # Clone the fresh KSU-Next source into a TEMP folder
+          # Clone KSU-Next legacy
           git clone -b legacy https://github.com/KernelSU-Next/KernelSU-Next /tmp/ksun
-          
-          # Move ONLY the actual kernel module folder to the correct drivers path
           mv /tmp/ksun/kernel drivers/kernelsu
           
-          # Add to drivers/Makefile cleanly
           sed -i '/kernelsu/d' drivers/Makefile || true
           echo "obj-y += kernelsu/" >> drivers/Makefile
 
@@ -57,11 +52,7 @@ jobs:
           # Architecture Fixes
           sed -i 's|register unsigned long current_stack_pointer asm ("sp");|/* Removed global sp */ #define current_stack_pointer ({ unsigned long sp; asm("mov %0, sp" : "=r"(sp)); sp; })|g' arch/arm64/include/asm/stack_pointer.h || true
           sed -i 's|"brk %0" : : "I"|"brk %0" : : "n"|g' arch/arm64/include/asm/kgdb.h || true
-          
-          # Fix VDSO offset collision
           sed -i '/extern unsigned long vdso_offset_/d' arch/arm64/include/asm/vdso.h || true
-          
-          # THE BULLETPROOF WALT TRACE FIX
           sed -i 's|.*#define TRACE_INCLUDE_PATH.*|#define TRACE_INCLUDE_PATH ../../kernel/sched/walt|g' kernel/sched/walt/trace.h || true
           
           # Fix SELinux includes in KSU
@@ -92,26 +83,42 @@ jobs:
           # Eradicate double linking
           sed -i '/tiny_sulog\.o/d' drivers/kernelsu/Makefile || true
           
-          # === FIX 3: SAMSUNG MISSING SYMBOL STUBS ===
+          # === SAMSUNG MISSING SYMBOL STUBS ===
           # Inject empty functions so the linker stops crying about missing Samsung debug logs
-          echo "void handle_decomp_fail() {}" >> drivers/kernelsu/supercalls.c
-          echo "void md_dump_slabinfo() {}" >> drivers/kernelsu/supercalls.c
+          echo -e "\nvoid handle_decomp_fail(void) {}\nvoid md_dump_slabinfo(void) {}\n" >> init/main.c
+
+      - name: 🔑 Export SELinux Symbols (User Fix)
+        run: |
+          # 1. Export selinux_state and selinux_blob_sizes (usually in hooks.c)
+          echo 'EXPORT_SYMBOL_GPL(selinux_state);' >> security/selinux/hooks.c
+          echo 'EXPORT_SYMBOL_GPL(selinux_blob_sizes);' >> security/selinux/hooks.c
+
+          # 2. Export Hashtab functions (in ss/hashtab.c)
+          echo 'EXPORT_SYMBOL_GPL(hashtab_search);' >> security/selinux/ss/hashtab.c
+          echo 'EXPORT_SYMBOL_GPL(hashtab_insert);' >> security/selinux/ss/hashtab.c
+
+          # 3. Export Ebitmap functions (in ss/ebitmap.c)
+          echo 'EXPORT_SYMBOL_GPL(ebitmap_set_bit);' >> security/selinux/ss/ebitmap.c
+          echo 'EXPORT_SYMBOL_GPL(ebitmap_get_bit);' >> security/selinux/ss/ebitmap.c
+
+          # 4. Export Avtab functions (in ss/avtab.c)
+          echo 'EXPORT_SYMBOL_GPL(avtab_search_node);' >> security/selinux/ss/avtab.c
+          echo 'EXPORT_SYMBOL_GPL(avtab_search_node_next);' >> security/selinux/ss/avtab.c
+          echo 'EXPORT_SYMBOL_GPL(avtab_insert_nonunique);' >> security/selinux/ss/avtab.c
+
+          # 5. Export Policy/Status functions (in ss/services.c or status.c)
+          echo 'EXPORT_SYMBOL_GPL(avc_ss_reset);' >> security/selinux/avc.c
+          echo 'EXPORT_SYMBOL_GPL(selnl_notify_policyload);' >> security/selinux/netlink.c
+          echo 'EXPORT_SYMBOL_GPL(selinux_status_update_policyload);' >> security/selinux/status.c
 
       - name: ⚙️ Generate Kernel Configuration
         run: |
           export ARCH=arm64
-          
-          # Fix Windows line endings causing Kconfig warnings
           find . -type f -name "Kconfig*" -exec dos2unix {} + || true
-          
-          # Force Executable Permissions
           chmod -R 755 scripts/
           find . -type f -name "*.sh" -exec chmod +x {} +
-          
-          # Failsafe for the Kconfig ghost error
           touch drivers/kernelsu/Kconfig
           
-          # Find the actual defconfig path and explicitly copy it to the standard arch folder
           DEFCONFIG_FILE=$(find . -name "gta9pwifi_eur_open_defconfig" | head -n 1)
           cp "$DEFCONFIG_FILE" arch/arm64/configs/gta9pwifi_eur_open_defconfig
           
@@ -121,13 +128,19 @@ jobs:
           ./scripts/config --file .config --enable KSU
           ./scripts/config --file .config --enable KSU_NEXT
           ./scripts/config --file .config --enable KSU_NEXT_MANUAL_HOOK
+          
+          # USER FIX: Force Enable SELinux in Config
+          ./scripts/config --file .config --enable SECURITY_SELINUX
+          ./scripts/config --file .config --enable SECURITY_SELINUX_BOOTPARAM
+          ./scripts/config --file .config --disable SECURITY_SELINUX_DISABLE
+          
           # Disable Samsung specific security that blocks KSU
           ./scripts/config --file .config --disable SECURITY_DEFEX
           ./scripts/config --file .config --disable SEC_RESTRICT_FORK
           
           make ARCH=arm64 HOSTCC=gcc CC="clang --target=aarch64-linux-gnu" CROSS_COMPILE=aarch64-linux-gnu- olddefconfig
 
-      - name: 🔨 Resolve SELinux Headers (Manual Generation)
+      - name: 🔨 Resolve SELinux Headers
         run: |
           mkdir -p security/selinux/include
           mkdir -p drivers/kernelsu
@@ -166,7 +179,6 @@ jobs:
           export CCACHE_DIR=$GITHUB_WORKSPACE/.ccache
           ccache -M 5G
           
-          # PASS 1: Compile the tree. It will fail at the end because KSU patches files mid-build.
           make ARCH=arm64 \
           CC="ccache clang --target=aarch64-linux-gnu" \
           CROSS_COMPILE=aarch64-linux-gnu- \
@@ -181,7 +193,6 @@ jobs:
           KCFLAGS="-Wno-error=implicit-function-declaration -Wno-error=implicit-int -Wno-error=int-conversion -Wno-error=unused-but-set-variable -Wno-error=strict-prototypes -Isecurity/selinux/include" \
           Image || echo "✅ First pass completed. KSU patched the tree. Starting Pass 2..."
           
-          # PASS 2: Recompile only the files KSU just patched, then successfully link the kernel!
           make ARCH=arm64 \
           CC="ccache clang --target=aarch64-linux-gnu" \
           CROSS_COMPILE=aarch64-linux-gnu- \
