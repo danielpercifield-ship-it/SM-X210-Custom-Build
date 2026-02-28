@@ -29,8 +29,11 @@ jobs:
           # Delete the corrupted existing folder in your repo first
           rm -rf drivers/kernelsu
           
-          # Clone the fresh KSU-Next source FROM THE LEGACY BRANCH
-          git clone -b legacy https://github.com/rifsxd/KernelSU-Next drivers/kernelsu
+          # Clone the fresh KSU-Next source into a TEMP folder
+          git clone -b legacy https://github.com/KernelSU-Next/KernelSU-Next /tmp/ksun
+          
+          # Move ONLY the actual kernel module folder to the correct drivers path
+          mv /tmp/ksun/kernel drivers/kernelsu
           
           # Add to drivers/Makefile cleanly
           sed -i '/kernelsu/d' drivers/Makefile || true
@@ -45,7 +48,7 @@ jobs:
           # === RESTORED FIX: Fix VDSO offset collision ===
           sed -i '/extern unsigned long vdso_offset_/d' arch/arm64/include/asm/vdso.h || true
           
-          # === THE BULLETPROOF WALT TRACE FIX ===
+          # THE BULLETPROOF WALT TRACE FIX
           sed -i 's|.*#define TRACE_INCLUDE_PATH.*|#define TRACE_INCLUDE_PATH ../../kernel/sched/walt|g' kernel/sched/walt/trace.h || true
           
           # Fix SELinux includes in KSU
@@ -61,6 +64,9 @@ jobs:
           
           # Fix USB-C header path
           find drivers/usb/typec -name "pd_dpm_pdo_select.h" -exec sed -i 's|"inc/tcpci.h"|"tcpci.h"|g' {} + || true
+
+          # Force version defines directly into supercalls.c
+          sed -i '1i #define KSU_VERSION 11938\n#define KSU_VERSION_TAG "v1.0.0"\n#define KERNEL_SU_VERSION 11938\n#define KERNEL_SU_VERSION_TAG "v1.0.0"' drivers/kernelsu/supercalls.c || true
 
           # Eradicate double linking
           sed -i '/tiny_sulog\.o/d' drivers/kernelsu/Makefile || true
