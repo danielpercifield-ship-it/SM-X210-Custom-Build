@@ -29,8 +29,13 @@ jobs:
           # Delete the corrupted existing folder in your repo first
           rm -rf drivers/kernelsu
           
-          # === CURE ROOT REPO POISONING (ACTUALLY FIXED) ===
-          # Strip the paths AND destroy the empty quotes ("") I accidentally left behind last time
+          # === REPAIR ACCIDENTAL MAKEFILE DELETION ===
+          # If the core-y line was accidentally deleted from the repo, this forcefully restores it
+          if ! grep -q "kernel/ certs/ mm/" Makefile; then
+              sed -i '/core-y.*:=.*init/a core-y += kernel/ certs/ mm/ fs/ ipc/ security/ crypto/ block/' Makefile
+          fi
+          
+          # Destroy any lingering quoted strings in the top-level Makefiles safely
           sed -i 's|"drivers/kernelsu/"||g' Makefile || true
           sed -i 's|drivers/kernelsu/||g' Makefile || true
           sed -i 's|kernelsu/||g' Makefile || true
