@@ -41,15 +41,14 @@ jobs:
           sed -i 's/""//g' Makefile || true
           sed -i 's/""//g' arch/arm64/Makefile || true
           
-          # === THE FIX: UPDATE OLD KCONFIG COMMITS ===
-          # Find any old references to drivers/kernelsu and shift them to fs/kernelsu
+          # UPDATE OLD KCONFIG COMMITS
           find . -name "Kconfig" -exec sed -i 's|drivers/kernelsu/Kconfig|fs/kernelsu/Kconfig|g' {} + || true
           sed -i '/kernelsu/d' drivers/Makefile || true
           
           # Clone KSU-Next legacy into TEMP
           git clone -b legacy https://github.com/KernelSU-Next/KernelSU-Next /tmp/ksun
           
-          # Move ONLY the actual kernel module folder to the correct filesystem path
+          # === THE LINKER FIX: Move KSU to the filesystem folder ===
           mv /tmp/ksun/kernel fs/kernelsu
           
           # Add to fs/Makefile cleanly
@@ -68,12 +67,11 @@ jobs:
           sed -i 's/static inline u32 current_sid(void)/static inline u32 ksu_current_sid_dummy(void)/g' fs/kernelsu/selinux/selinux.h || true
           sed -i 's|#include "ss/policydb.h"|#include "../../security/selinux/ss/policydb.h"|g' fs/kernelsu/kernel_compat.h || true
           
-          # THE GLOBAL KSU PATH SHIFT (Now pointing to fs/ instead of drivers/)
+          # === THE CARPET-BOMB PATH SHIFT ===
+          # 1. Fix the driver input file
           sed -i 's|#include.*ksu.h.*|#include "../../fs/kernelsu/ksu.h"|g' drivers/input/input.c || true
-          sed -i 's|#include.*ksu.h.*|#include "kernelsu/ksu.h"|g' fs/open.c || true
-          sed -i 's|#include.*ksu.h.*|#include "kernelsu/ksu.h"|g' fs/read_write.c || true
-          sed -i 's|#include.*ksu.h.*|#include "kernelsu/ksu.h"|g' fs/namespace.c || true
-          sed -i 's|#include.*ksu.h.*|#include "kernelsu/ksu.h"|g' fs/exec.c || true
+          # 2. Blanket overwrite EVERY filesystem file that has a KSU hook to use the correct local path
+          find fs/ -type f -name "*.c" -exec sed -i 's|#include.*ksu.h.*|#include "kernelsu/ksu.h"|g' {} + || true
           
           # ROBUST SECCOMP STRIP
           sed -i 's/current->seccomp\.mode/0/g' fs/kernelsu/app_profile.c || true
