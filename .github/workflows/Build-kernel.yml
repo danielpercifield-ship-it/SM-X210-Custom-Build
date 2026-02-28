@@ -29,13 +29,8 @@ jobs:
           chmod -R +x scripts/
           find . -type f -name "*.sh" -exec chmod +x {} + || true
           
-          # === CURE ROOT REPO POISONING ===
-          # Delete any manual KSU entries from BOTH Makefiles to clear bad quotes
-          sed -i '/kernelsu/d' Makefile || true
-          sed -i '/kernelsu/d' drivers/Makefile || true
-          
-          # Inject KSU properly and exclusively into the drivers list
-          echo 'obj-y += kernelsu/' >> drivers/Makefile
+          # Clean slate: Safely add KSU to the drivers build list if it's missing
+          grep -q "kernelsu" drivers/Makefile || echo "obj-\$(CONFIG_KSU) += kernelsu/" >> drivers/Makefile
 
       - name: 🩹 Apply Deep Source Code Fixes
         run: |
@@ -80,7 +75,6 @@ jobs:
           sed -i '1i #include <linux/types.h>\n#include <linux/kernel.h>\n#include <linux/spinlock.h>\n#include <linux/slab.h>\n#include <linux/ktime.h>\n#include <linux/cred.h>' drivers/kernelsu/tiny_sulog.c || true
 
           # === ERADICATE DOUBLE LINKING ===
-          # Remove tiny_sulog.o from KernelSU's makefile
           sed -i 's/tiny_sulog\.o//g' drivers/kernelsu/Makefile || true
           sed -i 's/tiny_sulog\.o//g' drivers/kernelsu/Kbuild || true
 
@@ -138,10 +132,18 @@ jobs:
         run: |
           export CCACHE_DIR=$GITHUB_WORKSPACE/.ccache
           ccache -M 5G
+          
+          # Force the full LLVM toolchain to fix the 'jiffies_64' GNU linker bug
           make ARCH=arm64 \
           CC="ccache clang --target=aarch64-linux-gnu" \
           REAL_CC="ccache clang --target=aarch64-linux-gnu" \
           CROSS_COMPILE=aarch64-linux-gnu- \
+          LD=ld.lld \
+          AR=llvm-ar \
+          NM=llvm-nm \
+          OBJCOPY=llvm-objcopy \
+          OBJDUMP=llvm-objdump \
+          STRIP=llvm-strip \
           HOSTCC="ccache gcc" \
           -j$(nproc --all) \
           KCFLAGS="-Idrivers/kernelsu -Idrivers/kernelsu/kernel -Isecurity/selinux/include -Isecurity/selinux -Wno-error=frame-larger-than= -Wno-implicit-function-declaration -Wno-strict-prototypes -Wno-int-conversion -Wno-enum-conversion -Wno-implicit-int -Wno-error=implicit-int -Wno-unused-but-set-variable -Wno-error=unused-but-set-variable" \
