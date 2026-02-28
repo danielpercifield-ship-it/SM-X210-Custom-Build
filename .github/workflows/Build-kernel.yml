@@ -45,7 +45,7 @@ jobs:
           sed -i 's|register unsigned long current_stack_pointer asm ("sp");|/* Removed global sp */ #define current_stack_pointer ({ unsigned long sp; asm("mov %0, sp" : "=r"(sp)); sp; })|g' arch/arm64/include/asm/stack_pointer.h || true
           sed -i 's|"brk %0" : : "I"|"brk %0" : : "n"|g' arch/arm64/include/asm/kgdb.h || true
           
-          # === RESTORED FIX: Fix VDSO offset collision ===
+          # Fix VDSO offset collision
           sed -i '/extern unsigned long vdso_offset_/d' arch/arm64/include/asm/vdso.h || true
           
           # THE BULLETPROOF WALT TRACE FIX
@@ -55,8 +55,16 @@ jobs:
           sed -i 's/static inline u32 current_sid(void)/static inline u32 ksu_current_sid_dummy(void)/g' drivers/kernelsu/selinux/selinux.h || true
           sed -i 's|#include "ss/policydb.h"|#include "../../security/selinux/ss/policydb.h"|g' drivers/kernelsu/kernel_compat.h || true
           
-          # Fix Manual Hook path
-          sed -i 's|<kernelsu/kernel/ksu.h>|"../kernelsu/kernel/ksu.h"|g' drivers/input/input.c || true
+          # === FIX 1: THE INPUT.C PATH SHIFT ===
+          find drivers/input -type f -name "input.c" -exec sed -i 's|"../kernelsu/kernel/ksu.h"|"../kernelsu/ksu.h"|g' {} + || true
+          find drivers/input -type f -name "input.c" -exec sed -i 's|<kernelsu/kernel/ksu.h>|"../kernelsu/ksu.h"|g' {} + || true
+          
+          # === FIX 2: ROBUST SECCOMP STRIP ===
+          # Safely convert the variables to 0/NULL, then comment out any invalid assignments it creates
+          sed -i 's/current->seccomp\.mode/0/g' drivers/kernelsu/app_profile.c || true
+          sed -i 's/current->seccomp\.filter/NULL/g' drivers/kernelsu/app_profile.c || true
+          sed -i 's/0 = 0;/\/\/ 0 = 0;/g' drivers/kernelsu/app_profile.c || true
+          sed -i 's/NULL = NULL;/\/\/ NULL = NULL;/g' drivers/kernelsu/app_profile.c || true
           
           # Fix KernelSU-Next SELinux structure for Kernel 5.4
           sed -i 's|db = \&policydb;|db = \&selinux_state.ss->policydb;|g' drivers/kernelsu/selinux/rules.c || true
@@ -176,3 +184,4 @@ jobs:
         with:
           name: TabA9Plus-Kernel
           path: TabA9Plus-KSU-Kernel.zip
+
