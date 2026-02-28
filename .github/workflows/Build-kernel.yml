@@ -29,8 +29,8 @@ jobs:
           # Delete the corrupted existing folder in your repo first
           rm -rf drivers/kernelsu
           
-          # Clone the fresh KSU-Next source
-          git clone https://github.com/rifsxd/KernelSU-Next drivers/kernelsu
+          # Clone the fresh KSU-Next source FROM THE LEGACY BRANCH
+          git clone -b legacy https://github.com/rifsxd/KernelSU-Next drivers/kernelsu
           
           # Add to drivers/Makefile cleanly
           sed -i '/kernelsu/d' drivers/Makefile || true
