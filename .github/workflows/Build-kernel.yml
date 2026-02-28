@@ -43,7 +43,6 @@ jobs:
           sed -i 's|"brk %0" : : "I"|"brk %0" : : "n"|g' arch/arm64/include/asm/kgdb.h || true
           
           # === THE BULLETPROOF WALT TRACE FIX ===
-          # Use wildcards to catch and replace the macro regardless of Samsung's trailing spaces
           sed -i 's|.*#define TRACE_INCLUDE_PATH.*|#define TRACE_INCLUDE_PATH ../../kernel/sched/walt|g' kernel/sched/walt/trace.h || true
           
           # Fix SELinux includes in KSU
@@ -95,7 +94,6 @@ jobs:
 
       - name: 🔨 Resolve SELinux Headers (Manual Generation)
         run: |
-          # The compiler needs all these constants to evaluate SELinux checks
           mkdir -p security/selinux/include
           mkdir -p drivers/kernelsu
           
@@ -118,4 +116,54 @@ jobs:
           #ifndef _SELINUX_AV_PERMISSIONS_H_
           #define _SELINUX_AV_PERMISSIONS_H_
           #define PROCESS__TRANSITION 0x00000001UL
-          #define PROCESS__DYN
+          #define PROCESS__DYNTRANSITION 0x00000002UL
+          #define PROCESS__SETFSCREATE 0x00000004UL
+          #define FILE__READ 0x00000001UL
+          #define FILE__WRITE 0x00000002UL
+          #endif
+          EOF
+          
+          cp security/selinux/include/flask.h drivers/kernelsu/flask.h
+          cp security/selinux/include/av_permissions.h drivers/kernelsu/av_permissions.h
+
+      - name: 🔨 Compile Kernel
+        run: |
+          export CCACHE_DIR=$GITHUB_WORKSPACE/.ccache
+          ccache -M 5G
+          
+          make ARCH=arm64 \
+          CC="ccache clang --target=aarch64-linux-gnu" \
+          CROSS_COMPILE=aarch64-linux-gnu- \
+          LD=ld.lld \
+          AR=llvm-ar \
+          NM=llvm-nm \
+          OBJCOPY=llvm-objcopy \
+          OBJDUMP=llvm-objdump \
+          STRIP=llvm-strip \
+          HOSTCC=gcc \
+          -j$(nproc --all) \
+          KCFLAGS="-Wno-error=implicit-function-declaration -Wno-error=implicit-int -Wno-error=int-conversion -Wno-error=unused-but-set-variable -Isecurity/selinux/include" \
+          Image
+
+      - name: 📦 Package Output
+        run: |
+          mkdir -p Final_Kernel
+          if [ -f arch/arm64/boot/Image ]; then
+            cp arch/arm64/boot/Image Final_Kernel/
+            echo "Build Success"
+          else
+            echo "Build Failed"
+            exit 1
+          fi
+          
+          # Create Flashable Zip (AnyKernel3)
+          git clone https://github.com/osm0sis/AnyKernel3.git
+          sed -i 's/do.devicecheck=1/do.devicecheck=0/g' AnyKernel3/anykernel.sh
+          cp Final_Kernel/Image AnyKernel3/
+          cd AnyKernel3 && zip -r9 ../TabA9Plus-KSU-Kernel.zip *
+
+      - name: 📤 Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: TabA9Plus-Kernel
+          path: TabA9Plus-KSU-Kernel.zip
