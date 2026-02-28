@@ -11,7 +11,8 @@ jobs:
         run: |
           export DEBIAN_FRONTEND=noninteractive
           sudo apt-get update
-          sudo apt-get install -y git bc build-essential flex bison libssl-dev libelf-dev clang llvm lld gcc-aarch64-linux-gnu tar zip wget python3 cpio xz-utils ccache curl
+          # Added dos2unix to fix the Windows line-ending formatting issues
+          sudo apt-get install -y git bc build-essential flex bison libssl-dev libelf-dev clang llvm lld gcc-aarch64-linux-gnu tar zip wget python3 cpio xz-utils ccache curl dos2unix
 
       - name: 📥 Checkout Kernel Source
         uses: actions/checkout@v4
@@ -26,13 +27,13 @@ jobs:
 
       - name: 📥 Integrate KernelSU-Next
         run: |
-          # 1. CRITICAL FIX: Delete any corrupted existing folder in your repo first!
+          # Delete the corrupted existing folder in your repo first
           rm -rf drivers/kernelsu
           
-          # 2. Clone the fresh KSU-Next source
+          # Clone the fresh KSU-Next source
           git clone https://github.com/rifsxd/KernelSU-Next drivers/kernelsu
           
-          # 3. Add to drivers/Makefile cleanly
+          # Add to drivers/Makefile cleanly
           sed -i '/kernelsu/d' drivers/Makefile || true
           echo "obj-y += kernelsu/" >> drivers/Makefile
 
@@ -56,26 +57,29 @@ jobs:
           # Fix USB-C header path
           find drivers/usb/typec -name "pd_dpm_pdo_select.h" -exec sed -i 's|"inc/tcpci.h"|"tcpci.h"|g' {} + || true
 
-          # Just in case this KSU-Next branch still has the tiny_sulog double-link bug:
+          # Eradicate double linking
           sed -i '/tiny_sulog\.o/d' drivers/kernelsu/Makefile || true
 
       - name: ⚙️ Generate Kernel Configuration
         run: |
           export ARCH=arm64
           
-          # === THE FIX: FORCE EXECUTABLE PERMISSIONS ===
+          # Fix Windows line endings causing Kconfig warnings
+          find . -type f -name "Kconfig*" -exec dos2unix {} + || true
+          
+          # Force Executable Permissions
           chmod -R 755 scripts/
           find . -type f -name "*.sh" -exec chmod +x {} +
           
           # Failsafe for the Kconfig ghost error
           touch drivers/kernelsu/Kconfig
           
-          # Find the actual defconfig path
-          DEFCONFIG_PATH=$(find arch/arm64/configs/ -name "gta9pwifi_eur_open_defconfig" | head -n 1)
-          DEFCONFIG_NAME=$(basename $DEFCONFIG_PATH)
+          # === THE FIX: FIND AND COPY DEFCONFIG ===
+          # Find the actual defconfig path and explicitly copy it to the standard arch folder
+          DEFCONFIG_FILE=$(find . -name "gta9pwifi_eur_open_defconfig" | head -n 1)
+          cp "$DEFCONFIG_FILE" arch/arm64/configs/gta9pwifi_eur_open_defconfig
           
-          # Pass CC and HOSTCC here too so it doesn't get confused
-          make ARCH=arm64 HOSTCC=gcc CC="clang --target=aarch64-linux-gnu" CROSS_COMPILE=aarch64-linux-gnu- $DEFCONFIG_NAME
+          make ARCH=arm64 HOSTCC=gcc CC="clang --target=aarch64-linux-gnu" CROSS_COMPILE=aarch64-linux-gnu- gta9pwifi_eur_open_defconfig
           
           # Enable KSU Configs
           ./scripts/config --file .config --enable KSU
@@ -119,7 +123,6 @@ jobs:
           #endif
           EOF
           
-          # Copy to drivers folder just in case local includes fail
           cp security/selinux/include/flask.h drivers/kernelsu/flask.h
           cp security/selinux/include/av_permissions.h drivers/kernelsu/av_permissions.h
 
@@ -128,7 +131,6 @@ jobs:
           export CCACHE_DIR=$GITHUB_WORKSPACE/.ccache
           ccache -M 5G
           
-          # You MUST specify the aarch64 target for clang, or it compiles for PC
           make ARCH=arm64 \
           CC="ccache clang --target=aarch64-linux-gnu" \
           CROSS_COMPILE=aarch64-linux-gnu- \
