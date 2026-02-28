@@ -7,13 +7,13 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: 🛠️ Prepare Environment & Install Toolchain
+      - name: 🛠️ Prepare Environment
         run: |
           export DEBIAN_FRONTEND=noninteractive
           sudo apt-get update
-          sudo apt-get install -y tzdata git software-properties-common bc build-essential flex bison libssl-dev libelf-dev clang llvm lld gcc-aarch64-linux-gnu tar zip wget python3 cpio xz-utils ccache curl
+          sudo apt-get install -y git bc build-essential flex bison libssl-dev libelf-dev clang llvm lld gcc-aarch64-linux-gnu tar zip wget python3 cpio xz-utils ccache curl
 
-      - name: 📥 Checkout Source Code
+      - name: 📥 Checkout Kernel Source
         uses: actions/checkout@v4
 
       - name: 🗄️ Restore Compiler Cache
@@ -24,81 +24,68 @@ jobs:
           restore-keys: |
             ksu-ccache-
 
-      - name: 📁 Setup & Permissions
+      - name: 📥 Integrate KernelSU-Next
         run: |
-          chmod -R +x scripts/
-          find . -type f -name "*.sh" -exec chmod +x {} + || true
+          # 1. CRITICAL FIX: Delete the corrupted existing folder in your repo first!
+          rm -rf drivers/kernelsu
           
-          # Cleanly inject KSU into the drivers build list
+          # 2. Clone the fresh KSU-Next source
+          git clone https://github.com/rifsxd/KernelSU-Next drivers/kernelsu
+          
+          # 3. Add to drivers/Makefile cleanly
           sed -i '/kernelsu/d' drivers/Makefile || true
-          echo 'obj-y += kernelsu/' >> drivers/Makefile
+          echo "obj-y += kernelsu/" >> drivers/Makefile
 
       - name: 🩹 Apply Deep Source Code Fixes
         run: |
-          # Architecture & Trace Fixes
+          # Architecture Fixes
           sed -i 's|register unsigned long current_stack_pointer asm ("sp");|/* Removed global sp */ #define current_stack_pointer ({ unsigned long sp; asm("mov %0, sp" : "=r"(sp)); sp; })|g' arch/arm64/include/asm/stack_pointer.h || true
           sed -i 's|"brk %0" : : "I"|"brk %0" : : "n"|g' arch/arm64/include/asm/kgdb.h || true
-          ln -sf $(pwd)/arch/arm64/include/asm $(pwd)/include/asm || true
-          sed -i 's|#define TRACE_INCLUDE_PATH .|#define TRACE_INCLUDE_PATH ../../kernel/sched/walt|g' kernel/sched/walt/trace.h || true
           
-          # SELinux Dummy & Header Redirection
+          # Fix SELinux includes in KSU
           sed -i 's/static inline u32 current_sid(void)/static inline u32 ksu_current_sid_dummy(void)/g' drivers/kernelsu/selinux/selinux.h || true
-          sed -i '/extern unsigned long vdso_offset_/d' arch/arm64/include/asm/vdso.h || true
           sed -i 's|#include "ss/policydb.h"|#include "../../security/selinux/ss/policydb.h"|g' drivers/kernelsu/kernel_compat.h || true
           
-          # Focaltech & App Profile Fixes
-          mkdir -p drivers/input/touchscreen/focaltech_touch_spi/include/firmware
-          touch drivers/input/touchscreen/focaltech_touch_spi/include/firmware/fw_sample.i || true
-          sed -i 's/!!!current->seccomp.mode/0/g' drivers/kernelsu/app_profile.c || true
-          sed -i 's/current->seccomp.mode = 0;/\/\/current->seccomp.mode = 0;/g' drivers/kernelsu/app_profile.c || true
-          sed -i 's/current->seccomp.filter = NULL;/\/\/current->seccomp.filter = NULL;/g' drivers/kernelsu/app_profile.c || true
-          
-          # Fix Manual Hook path in input.c
+          # Fix Manual Hook path
           sed -i 's|<kernelsu/kernel/ksu.h>|"../kernelsu/kernel/ksu.h"|g' drivers/input/input.c || true
           
-          # USB-C Header Path Fix
-          sed -i 's|"inc/tcpci.h"|"tcpci.h"|g' drivers/usb/typec/P86801_tcpc/inc/pd_dpm_pdo_select.h || true
-          
-          # FORCE VERSION DEFINES DIRECTLY INTO THE C FILE
-          sed -i '1i #define KSU_VERSION 11938\n#define KSU_VERSION_TAG "v1.0.0"\n#define KERNEL_SU_VERSION 11938\n#define KERNEL_SU_VERSION_TAG "v1.0.0"' drivers/kernelsu/supercalls.c || true
-          
-          # Fix KernelSU Include Path conflicts
-          sed -i 's|#include "../ksu.h"|#include "../kernel/ksu.h"|g' drivers/kernelsu/selinux/selinux.c || true
-          sed -i 's|#include "../kernksu.h"|#include "../kernel/ksu.h"|g' drivers/kernelsu/selinux/selinux.c || true
-          sed -i 's|#include "ksu.h"|#include "../kernel/ksu.h"|g' drivers/kernelsu/selinux/selinux.c || true
-          
-          # Restore rules.c SELinux struct fixes
+          # Fix KernelSU-Next SELinux structure for Kernel 5.4
           sed -i 's|db = \&policydb;|db = \&selinux_state.ss->policydb;|g' drivers/kernelsu/selinux/rules.c || true
           sed -i 's|selinux_status_update_policyload(0);|selinux_status_update_policyload(\&selinux_state, 0);|g' drivers/kernelsu/selinux/rules.c || true
-          sed -i 's|selinux_status_update_policyload(seqno);|selinux_status_update_policyload(\&selinux_state, seqno);|g' drivers/kernelsu/selinux/rules.c || true
+          
+          # Fix USB-C header path
+          find drivers/usb/typec -name "pd_dpm_pdo_select.h" -exec sed -i 's|"inc/tcpci.h"|"tcpci.h"|g' {} + || true
 
-          # Inject missing headers into tiny_sulog.c
-          sed -i '1i #include <linux/types.h>\n#include <linux/kernel.h>\n#include <linux/spinlock.h>\n#include <linux/slab.h>\n#include <linux/ktime.h>\n#include <linux/cred.h>' drivers/kernelsu/tiny_sulog.c || true
-
-          # === ERADICATE DOUBLE LINKING ===
-          sed -i 's/tiny_sulog\.o//g' drivers/kernelsu/Makefile || true
-          sed -i 's/tiny_sulog\.o//g' drivers/kernelsu/Kbuild || true
+          # Just in case this KSU-Next branch still has the tiny_sulog double-link bug:
+          sed -i '/tiny_sulog\.o/d' drivers/kernelsu/Makefile || true
 
       - name: ⚙️ Generate Kernel Configuration
         run: |
           export ARCH=arm64
-          DEFCONFIG_FILE=$(find . -name "gta9pwifi_eur_open_defconfig" | head -n 1)
-          cp "$DEFCONFIG_FILE" arch/arm64/configs/custom_vendor_defconfig
+          # Find the actual defconfig path
+          DEFCONFIG_PATH=$(find arch/arm64/configs/ -name "gta9pwifi_eur_open_defconfig" | head -n 1)
+          DEFCONFIG_NAME=$(basename $DEFCONFIG_PATH)
           
-          make ARCH=arm64 HOSTCC=gcc CC=gcc custom_vendor_defconfig
-          ./scripts/config --file .config --disable SECURITY_DEFEX
-          ./scripts/config --file .config --disable SEC_RESTRICT_FORK
+          # Pass CC and HOSTCC here too so it doesn't get confused
+          make ARCH=arm64 HOSTCC=gcc CC="clang --target=aarch64-linux-gnu" CROSS_COMPILE=aarch64-linux-gnu- $DEFCONFIG_NAME
+          
+          # Enable KSU Configs
           ./scripts/config --file .config --enable KSU
           ./scripts/config --file .config --enable KSU_NEXT
           ./scripts/config --file .config --enable KSU_NEXT_MANUAL_HOOK
-          make ARCH=arm64 HOSTCC=gcc CC=gcc olddefconfig
+          # Disable Samsung specific security that blocks KSU
+          ./scripts/config --file .config --disable SECURITY_DEFEX
+          ./scripts/config --file .config --disable SEC_RESTRICT_FORK
+          
+          make ARCH=arm64 HOSTCC=gcc CC="clang --target=aarch64-linux-gnu" CROSS_COMPILE=aarch64-linux-gnu- olddefconfig
 
-      - name: 🔨 Resolve SELinux Headers
+      - name: 🔨 Resolve SELinux Headers (Manual Generation)
         run: |
+          # 2. CRITICAL FIX: The compiler needs all these constants to evaluate SELinux checks
           mkdir -p security/selinux/include
           mkdir -p drivers/kernelsu
           
-          cat <<EOF > flask.h
+          cat <<EOF > security/selinux/include/flask.h
           #ifndef _SELINUX_FLASK_H_
           #define _SELINUX_FLASK_H_
           #define SECCLASS_PROCESS 1
@@ -113,7 +100,7 @@ jobs:
           #endif
           EOF
 
-          cat <<EOF > av_permissions.h
+          cat <<EOF > security/selinux/include/av_permissions.h
           #ifndef _SELINUX_AV_PERMISSIONS_H_
           #define _SELINUX_AV_PERMISSIONS_H_
           #define PROCESS__TRANSITION 0x00000001UL
@@ -124,20 +111,18 @@ jobs:
           #endif
           EOF
           
-          cp flask.h security/selinux/include/flask.h
-          cp av_permissions.h security/selinux/include/av_permissions.h
-          cp flask.h drivers/kernelsu/flask.h
-          cp av_permissions.h drivers/kernelsu/av_permissions.h
+          # Copy to drivers folder just in case local includes fail
+          cp security/selinux/include/flask.h drivers/kernelsu/flask.h
+          cp security/selinux/include/av_permissions.h drivers/kernelsu/av_permissions.h
 
       - name: 🔨 Compile Kernel
         run: |
           export CCACHE_DIR=$GITHUB_WORKSPACE/.ccache
           ccache -M 5G
           
-          # Force the full LLVM toolchain
+          # 3. CRITICAL FIX: You MUST specify the aarch64 target for clang, or it compiles for PC
           make ARCH=arm64 \
           CC="ccache clang --target=aarch64-linux-gnu" \
-          REAL_CC="ccache clang --target=aarch64-linux-gnu" \
           CROSS_COMPILE=aarch64-linux-gnu- \
           LD=ld.lld \
           AR=llvm-ar \
@@ -145,28 +130,30 @@ jobs:
           OBJCOPY=llvm-objcopy \
           OBJDUMP=llvm-objdump \
           STRIP=llvm-strip \
-          HOSTCC="ccache gcc" \
+          HOSTCC=gcc \
           -j$(nproc --all) \
-          KCFLAGS="-Idrivers/kernelsu -Idrivers/kernelsu/kernel -Isecurity/selinux/include -Isecurity/selinux -Wno-error=frame-larger-than= -Wno-implicit-function-declaration -Wno-strict-prototypes -Wno-int-conversion -Wno-enum-conversion -Wno-implicit-int -Wno-error=implicit-int -Wno-unused-but-set-variable -Wno-error=unused-but-set-variable" \
+          KCFLAGS="-Wno-error=implicit-function-declaration -Wno-error=implicit-int -Wno-error=int-conversion -Wno-error=unused-but-set-variable -Isecurity/selinux/include" \
           Image
 
       - name: 📦 Package Output
         run: |
           mkdir -p Final_Kernel
-          cp arch/arm64/boot/Image Final_Kernel/ || true
-          cd Final_Kernel
-          tar -cvf TabA9Plus-KSU-Kernel.tar Image || true
-          git clone https://github.com/osm0sis/AnyKernel3.git
-          cd AnyKernel3
-          sed -i 's/do.devicecheck=1/do.devicecheck=0/g' anykernel.sh
-          sed -i 's/block=\/dev\/block\/bootdevice\/by-name\/boot;/block=auto;/g' anykernel.sh
-          cp ../Image .
-          zip -r9 ../TabA9Plus-KSU-AnyKernel3.zip * -x .git README.md *placeholder
+          if [ -f arch/arm64/boot/Image ]; then
+            cp arch/arm64/boot/Image Final_Kernel/
+            echo "Build Success"
+          else
+            echo "Build Failed"
+            exit 1
+          fi
           
+          # Create Flashable Zip (AnyKernel3)
+          git clone https://github.com/osm0sis/AnyKernel3.git
+          sed -i 's/do.devicecheck=1/do.devicecheck=0/g' AnyKernel3/anykernel.sh
+          cp Final_Kernel/Image AnyKernel3/
+          cd AnyKernel3 && zip -r9 ../TabA9Plus-KSU-Kernel.zip *
+
       - name: 📤 Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: TabA9Plus-KSU-Kernel
-          path: |
-            Final_Kernel/TabA9Plus-KSU-Kernel.tar
-            Final_Kernel/TabA9Plus-KSU-AnyKernel3.zip
+          name: TabA9Plus-Kernel
+          path: TabA9Plus-KSU-Kernel.zip
