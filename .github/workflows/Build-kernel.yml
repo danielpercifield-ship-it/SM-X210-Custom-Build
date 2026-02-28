@@ -29,8 +29,9 @@ jobs:
           chmod -R +x scripts/
           find . -type f -name "*.sh" -exec chmod +x {} + || true
           
-          # Clean slate: Safely add KSU to the drivers build list if it's missing
-          grep -q "kernelsu" drivers/Makefile || echo "obj-\$(CONFIG_KSU) += kernelsu/" >> drivers/Makefile
+          # Cleanly inject KSU into the drivers build list
+          sed -i '/kernelsu/d' drivers/Makefile || true
+          echo 'obj-y += kernelsu/' >> drivers/Makefile
 
       - name: 🩹 Apply Deep Source Code Fixes
         run: |
@@ -133,7 +134,7 @@ jobs:
           export CCACHE_DIR=$GITHUB_WORKSPACE/.ccache
           ccache -M 5G
           
-          # Force the full LLVM toolchain to fix the 'jiffies_64' GNU linker bug
+          # Force the full LLVM toolchain
           make ARCH=arm64 \
           CC="ccache clang --target=aarch64-linux-gnu" \
           REAL_CC="ccache clang --target=aarch64-linux-gnu" \
