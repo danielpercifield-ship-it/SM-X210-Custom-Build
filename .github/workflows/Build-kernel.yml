@@ -26,7 +26,7 @@ jobs:
 
       - name: 📥 Integrate KernelSU-Next
         run: |
-          # 1. CRITICAL FIX: Delete the corrupted existing folder in your repo first!
+          # 1. CRITICAL FIX: Delete any corrupted existing folder in your repo first!
           rm -rf drivers/kernelsu
           
           # 2. Clone the fresh KSU-Next source
@@ -62,6 +62,14 @@ jobs:
       - name: ⚙️ Generate Kernel Configuration
         run: |
           export ARCH=arm64
+          
+          # === THE FIX: FORCE EXECUTABLE PERMISSIONS ===
+          chmod -R 755 scripts/
+          find . -type f -name "*.sh" -exec chmod +x {} +
+          
+          # Failsafe for the Kconfig ghost error
+          touch drivers/kernelsu/Kconfig
+          
           # Find the actual defconfig path
           DEFCONFIG_PATH=$(find arch/arm64/configs/ -name "gta9pwifi_eur_open_defconfig" | head -n 1)
           DEFCONFIG_NAME=$(basename $DEFCONFIG_PATH)
@@ -81,7 +89,7 @@ jobs:
 
       - name: 🔨 Resolve SELinux Headers (Manual Generation)
         run: |
-          # 2. CRITICAL FIX: The compiler needs all these constants to evaluate SELinux checks
+          # The compiler needs all these constants to evaluate SELinux checks
           mkdir -p security/selinux/include
           mkdir -p drivers/kernelsu
           
@@ -120,7 +128,7 @@ jobs:
           export CCACHE_DIR=$GITHUB_WORKSPACE/.ccache
           ccache -M 5G
           
-          # 3. CRITICAL FIX: You MUST specify the aarch64 target for clang, or it compiles for PC
+          # You MUST specify the aarch64 target for clang, or it compiles for PC
           make ARCH=arm64 \
           CC="ccache clang --target=aarch64-linux-gnu" \
           CROSS_COMPILE=aarch64-linux-gnu- \
