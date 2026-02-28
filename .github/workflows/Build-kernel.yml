@@ -26,16 +26,21 @@ jobs:
 
       - name: 📥 Integrate KernelSU-Next
         run: |
-          # Delete the corrupted existing folder in your repo first
+          # 1. Delete the corrupted existing folder in your repo first
           rm -rf drivers/kernelsu
           
-          # Clone the fresh KSU-Next source into a TEMP folder
+          # 2. === CURE ROOT REPO POISONING ===
+          # Destroy any lingering quoted strings in the top-level Makefiles
+          sed -i '/kernelsu/d' Makefile || true
+          sed -i '/kernelsu/d' arch/arm64/Makefile || true
+          
+          # 3. Clone the fresh KSU-Next source into a TEMP folder
           git clone -b legacy https://github.com/KernelSU-Next/KernelSU-Next /tmp/ksun
           
-          # Move ONLY the actual kernel module folder to the correct drivers path
+          # 4. Move ONLY the actual kernel module folder to the correct drivers path
           mv /tmp/ksun/kernel drivers/kernelsu
           
-          # Add to drivers/Makefile cleanly
+          # 5. Add to drivers/Makefile cleanly
           sed -i '/kernelsu/d' drivers/Makefile || true
           echo "obj-y += kernelsu/" >> drivers/Makefile
 
