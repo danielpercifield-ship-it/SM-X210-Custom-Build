@@ -163,7 +163,7 @@ jobs:
           STRIP=llvm-strip \
           HOSTCC=gcc \
           -j$(nproc --all) \
-          KCFLAGS="-Wno-error=implicit-function-declaration -Wno-error=implicit-int -Wno-error=int-conversion -Wno-error=unused-but-set-variable -Isecurity/selinux/include" \
+          KCFLAGS="-Wno-error=implicit-function-declaration -Wno-error=implicit-int -Wno-error=int-conversion -Wno-error=unused-but-set-variable -Wno-error=strict-prototypes -Isecurity/selinux/include" \
           Image
 
       - name: 📦 Package Output
@@ -188,4 +188,3 @@ jobs:
         with:
           name: TabA9Plus-Kernel
           path: TabA9Plus-KSU-Kernel.zip
-
