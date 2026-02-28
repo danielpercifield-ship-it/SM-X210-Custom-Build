@@ -4,7 +4,7 @@ obj-y := allowlist.o apk_sign.o app_profile.o extras.o \
          feature.o file_wrapper.o kernel_compat.o kernel_umount.o \
          ksud.o lsm_hooks.o seccomp_cache.o setuid_hook.o \
          su_mount_ns.o sucompat.o supercalls.o throne_tracker.o \
-         tiny_sulog.o util.o
+         util.o
 
 # 2. Tell the system to go into subfolders
 obj-y += kernel/
@@ -22,7 +22,6 @@ ccflags-y += -I$(srctree)/$(src)
 ccflags-y += -I$(src)/kernel
 ccflags-y += -DCONFIG_SECURITY_SELINUX_SIDTAB_HASH_BITS=9
 
-
 # Critical Flags for KSU_NEXT
 ccflags-y += -DCONFIG_KSU_NEXT_MANUAL_HOOK
 ccflags-y += -Wno-strict-prototypes -Wno-implicit-function-declaration
@@ -33,3 +32,4 @@ KSU_EXPECTED_HASH := 79e590113c4c4c0c222978e413a5faa801666957b1212a328e46c00c698
 
 ccflags-y += -DKSU_NEXT_EXPECTED_SIZE=$(KSU_EXPECTED_SIZE)
 ccflags-y += -DKSU_NEXT_EXPECTED_HASH=\"$(KSU_EXPECTED_HASH)\"
+
