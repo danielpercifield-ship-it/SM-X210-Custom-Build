@@ -83,46 +83,48 @@ jobs:
           # Inject empty functions so the linker stops crying about missing Samsung debug logs
           echo -e "\nvoid handle_decomp_fail(void) {}\nvoid md_dump_slabinfo(void) {}\n" >> init/main.c
    
-      - name: 🔑 Force Export SELinux Symbols (Strip Static)
+      - name: 🔑 Smart Export SELinux Symbols
         run: |
-          # Function to strip static and export
-          force_export() {
-              local file=$1
-              local symbol=$2
-              # Remove static keyword from the definition
-              sed -i "s/^static \(.*$symbol\)/\1/g" "$file"
-              # Ensure it's exported at the end of the file
-              sed -i "/EXPORT_SYMBOL_GPL($symbol)/d" "$file"
-              echo "EXPORT_SYMBOL_GPL($symbol);" >> "$file"
-          }
+          # Define the symbols we need to export for KernelSU
+          SYMBOLS=(
+            "selinux_state"
+            "selinux_blob_sizes"
+            "hashtab_search"
+            "hashtab_insert"
+            "ebitmap_set_bit"
+            "ebitmap_get_bit"
+            "avtab_search_node"
+            "avtab_search_node_next"
+            "avtab_insert_nonunique"
+            "avc_ss_reset"
+            "selnl_notify_policyload"
+            "selinux_status_update_policyload"
+          )
 
-          # 1. Hooks.c: selinux_state and selinux_blob_sizes
-          force_export security/selinux/hooks.c selinux_state
-          force_export security/selinux/hooks.c selinux_blob_sizes
+          for sym in "${SYMBOLS[@]}"; do
+            # Find which .c file contains the 'static' definition of the symbol
+            # We look in security/selinux and its subdirectories
+            FILE=$(grep -lE "^static .*\b$sym\b" security/selinux/*.c security/selinux/ss/*.c 2>/dev/null | head -n 1)
 
-          # 2. Hashtab: hashtab_search and hashtab_insert
-          force_export security/selinux/ss/hashtab.c hashtab_search
-          force_export security/selinux/ss/hashtab.c hashtab_insert
-
-          # 3. Ebitmap: ebitmap_set_bit and ebitmap_get_bit
-          force_export security/selinux/ss/ebitmap.c ebitmap_set_bit
-          force_export security/selinux/ss/ebitmap.c ebitmap_get_bit
-
-          # 4. Avtab: search and insert functions
-          force_export security/selinux/ss/avtab.c avtab_search_node
-          force_export security/selinux/ss/avtab.c avtab_search_node_next
-          force_export security/selinux/ss/avtab.c avtab_insert_nonunique
-
-          # 5. Security Services & Netlink
-          force_export security/selinux/avc.c avc_ss_reset
-          force_export security/selinux/netlink.c selnl_notify_policyload
-          force_export security/selinux/status.c selinux_status_update_policyload
-
-          # 6. Special Case: policydb (often needed for KSU-Next)
-          force_export security/selinux/ss/policydb.c policydb_search_range
-          
-          echo "✅ SELinux symbols have been stripped of static and exported." 
-   
+            if [ -n "$FILE" ]; then
+              echo "✅ Found $sym in $FILE. Stripping static and exporting..."
+              # Remove 'static' keyword
+              sed -i "s/^static \(.*$sym\)/\1/g" "$FILE"
+              # Ensure EXPORT_SYMBOL_GPL is at the bottom
+              sed -i "/EXPORT_SYMBOL_GPL($sym)/d" "$FILE"
+              echo "EXPORT_SYMBOL_GPL($sym);" >> "$FILE"
+            else
+              # If not found as static, check if it's already global but just not exported
+              FILE_GLOBAL=$(grep -lE "^.*\b$sym\b" security/selinux/*.c security/selinux/ss/*.c 2>/dev/null | head -n 1)
+              if [ -n "$FILE_GLOBAL" ]; then
+                 echo "ℹ️ $sym is already global in $FILE_GLOBAL. Exporting..."
+                 sed -i "/EXPORT_SYMBOL_GPL($sym)/d" "$FILE_GLOBAL"
+                 echo "EXPORT_SYMBOL_GPL($sym);" >> "$FILE_GLOBAL"
+              else
+                 echo "⚠️ Warning: Could not find $sym in security/selinux/"
+              fi
+            fi
+          done   
       - name: ⚙️ Generate Kernel Configuration
         run: |
           export ARCH=arm64
