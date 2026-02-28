@@ -29,12 +29,13 @@ jobs:
           # Delete the corrupted existing folder in your repo first
           rm -rf drivers/kernelsu
           
-          # === CURE ROOT REPO POISONING (FIXED) ===
-          # Surgically remove ONLY the text "kernelsu" instead of deleting the whole line!
-          sed -i 's|drivers/kernelsu/||g' Makefile || true
+          # === CURE ROOT REPO POISONING (ACTUALLY FIXED) ===
+          # Strip the paths AND destroy the empty quotes ("") I accidentally left behind last time
           sed -i 's|"drivers/kernelsu/"||g' Makefile || true
+          sed -i 's|drivers/kernelsu/||g' Makefile || true
           sed -i 's|kernelsu/||g' Makefile || true
-          sed -i 's|drivers/kernelsu/||g' arch/arm64/Makefile || true
+          sed -i 's/""//g' Makefile || true
+          sed -i 's/""//g' arch/arm64/Makefile || true
           
           # Clone the fresh KSU-Next source into a TEMP folder
           git clone -b legacy https://github.com/KernelSU-Next/KernelSU-Next /tmp/ksun
