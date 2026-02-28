@@ -83,26 +83,46 @@ jobs:
           # Inject empty functions so the linker stops crying about missing Samsung debug logs
           echo -e "\nvoid handle_decomp_fail(void) {}\nvoid md_dump_slabinfo(void) {}\n" >> init/main.c
    
-      - name: 🔑 Export SELinux Symbols (User Fix)
+      - name: 🔑 Force Export SELinux Symbols (Strip Static)
         run: |
-          # 1. Export selinux_state and selinux_blob_sizes (usually in hooks.c)
-          echo 'EXPORT_SYMBOL_GPL(selinux_state);' >> security/selinux/hooks.c
-          echo 'EXPORT_SYMBOL_GPL(selinux_blob_sizes);' >> security/selinux/hooks.c
-          # 2. Export Hashtab functions (in ss/hashtab.c)
-          echo 'EXPORT_SYMBOL_GPL(hashtab_search);' >> security/selinux/ss/hashtab.c
-          echo 'EXPORT_SYMBOL_GPL(hashtab_insert);' >> security/selinux/ss/hashtab.c
-          # 3. Export Ebitmap functions (in ss/ebitmap.c)
-          echo 'EXPORT_SYMBOL_GPL(ebitmap_set_bit);' >> security/selinux/ss/ebitmap.c
-          echo 'EXPORT_SYMBOL_GPL(ebitmap_get_bit);' >> security/selinux/ss/ebitmap.c
-          # 4. Export Avtab functions (in ss/avtab.c)
-          echo 'EXPORT_SYMBOL_GPL(avtab_search_node);' >> security/selinux/ss/avtab.c
-          echo 'EXPORT_SYMBOL_GPL(avtab_search_node_next);' >> security/selinux/ss/avtab.c
-          echo 'EXPORT_SYMBOL_GPL(avtab_insert_nonunique);' >> security/selinux/ss/avtab.c
-          # 5. Export Policy/Status functions (in ss/services.c or status.c)
-          echo 'EXPORT_SYMBOL_GPL(avc_ss_reset);' >> security/selinux/avc.c
-          echo 'EXPORT_SYMBOL_GPL(selnl_notify_policyload);' >> security/selinux/netlink.c
-          echo 'EXPORT_SYMBOL_GPL(selinux_status_update_policyload);' >> security/selinux/status.c
- 
+          # Function to strip static and export
+          force_export() {
+              local file=$1
+              local symbol=$2
+              # Remove static keyword from the definition
+              sed -i "s/^static \(.*$symbol\)/\1/g" "$file"
+              # Ensure it's exported at the end of the file
+              sed -i "/EXPORT_SYMBOL_GPL($symbol)/d" "$file"
+              echo "EXPORT_SYMBOL_GPL($symbol);" >> "$file"
+          }
+
+          # 1. Hooks.c: selinux_state and selinux_blob_sizes
+          force_export security/selinux/hooks.c selinux_state
+          force_export security/selinux/hooks.c selinux_blob_sizes
+
+          # 2. Hashtab: hashtab_search and hashtab_insert
+          force_export security/selinux/ss/hashtab.c hashtab_search
+          force_export security/selinux/ss/hashtab.c hashtab_insert
+
+          # 3. Ebitmap: ebitmap_set_bit and ebitmap_get_bit
+          force_export security/selinux/ss/ebitmap.c ebitmap_set_bit
+          force_export security/selinux/ss/ebitmap.c ebitmap_get_bit
+
+          # 4. Avtab: search and insert functions
+          force_export security/selinux/ss/avtab.c avtab_search_node
+          force_export security/selinux/ss/avtab.c avtab_search_node_next
+          force_export security/selinux/ss/avtab.c avtab_insert_nonunique
+
+          # 5. Security Services & Netlink
+          force_export security/selinux/avc.c avc_ss_reset
+          force_export security/selinux/netlink.c selnl_notify_policyload
+          force_export security/selinux/status.c selinux_status_update_policyload
+
+          # 6. Special Case: policydb (often needed for KSU-Next)
+          force_export security/selinux/ss/policydb.c policydb_search_range
+          
+          echo "✅ SELinux symbols have been stripped of static and exported." 
+   
       - name: ⚙️ Generate Kernel Configuration
         run: |
           export ARCH=arm64
@@ -132,6 +152,38 @@ jobs:
           
           make ARCH=arm64 HOSTCC=gcc CC="clang --target=aarch64-linux-gnu" CROSS_COMPILE=aarch64-linux-gnu- olddefconfig
    
+      - name: 🔨 Resolve SELinux Headers
+        run: |
+          mkdir -p security/selinux/include
+          mkdir -p drivers/kernelsu
+          
+          cat <<EOF > security/selinux/include/flask.h
+          #ifndef _SELINUX_FLASK_H_
+          #define _SELINUX_FLASK_H_
+          #define SECCLASS_PROCESS 1
+          #define SECCLASS_FILE 2
+          #define SECINITSID_KERNEL 1
+          #define SECINITSID_SECURITY 2
+          #define SECINITSID_UNLABELED 3
+          #define SECINITSID_NUM 27
+          #ifndef CONFIG_SECURITY_SELINUX_SIDTAB_HASH_BITS
+          #define CONFIG_SECURITY_SELINUX_SIDTAB_HASH_BITS 9
+          #endif
+          #endif
+          EOF
+          cat <<EOF > security/selinux/include/av_permissions.h
+          #ifndef _SELINUX_AV_PERMISSIONS_H_
+          #define _SELINUX_AV_PERMISSIONS_H_
+          #define PROCESS__TRANSITION 0x00000001UL
+          #define PROCESS__DYNTRANSITION 0x00000002UL
+          #define PROCESS__SETFSCREATE 0x00000004UL
+          #define FILE__READ 0x00000001UL
+          #define FILE__WRITE 0x00000002UL
+          #endif
+          EOF
+          
+          cp security/selinux/include/flask.h drivers/kernelsu/flask.h
+          cp security/selinux/include/av_permissions.h drivers/kernelsu/av_permissions.h
       
       - name: 🔨 Compile Kernel (DOUBLE MAKE)
         run: |
@@ -148,7 +200,7 @@ jobs:
           OBJDUMP=llvm-objdump \
           STRIP=llvm-strip \
           HOSTCC=gcc \
-          -j$(nproc --all) \
+          -j1 \
           KCFLAGS="-Wno-error=implicit-function-declaration -Wno-error=implicit-int -Wno-error=int-conversion -Wno-error=unused-but-set-variable -Wno-error=strict-prototypes -Isecurity/selinux/include" \
           Image || echo "✅ First pass completed. KSU patched the tree. Starting Pass 2..."
           
@@ -165,6 +217,7 @@ jobs:
           -j$(nproc --all) \
           KCFLAGS="-Wno-error=implicit-function-declaration -Wno-error=implicit-int -Wno-error=int-conversion -Wno-error=unused-but-set-variable -Wno-error=strict-prototypes -Isecurity/selinux/include" \
           Image
+      
       - name: 📦 Package Output
         run: |
           mkdir -p Final_Kernel
@@ -181,6 +234,7 @@ jobs:
           sed -i 's/do.devicecheck=1/do.devicecheck=0/g' AnyKernel3/anykernel.sh
           cp Final_Kernel/Image AnyKernel3/
           cd AnyKernel3 && zip -r9 ../TabA9Plus-KSU-Kernel.zip *
+    
       - name: 📤 Upload Artifact
         uses: actions/upload-artifact@v4
         with:
