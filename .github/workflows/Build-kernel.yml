@@ -74,15 +74,6 @@ jobs:
           # Inject missing headers into tiny_sulog.c
           sed -i '1i #include <linux/types.h>\n#include <linux/kernel.h>\n#include <linux/spinlock.h>\n#include <linux/slab.h>\n#include <linux/ktime.h>\n#include <linux/cred.h>' drivers/kernelsu/tiny_sulog.c || true
 
-          # === THE TRUE LINKER FIX ===
-          # Stop tiny_sulog from double-compiling by surgically removing it from official KSU build files
-          find drivers/kernelsu -type f -name "Makefile" -exec sed -i '/tiny_sulog\.o/d' {} + || true
-          find drivers/kernelsu -type f -name "Kbuild" -exec sed -i '/tiny_sulog\.o/d' {} + || true
-          
-          # Remove literal quotes from any Makefile paths that confuse the linker
-          find . -type f \( -name "Makefile" -o -name "Kbuild" \) -exec sed -i 's|"drivers/kernelsu/"|drivers/kernelsu/|g' {} + || true
-          find . -type f \( -name "Makefile" -o -name "Kbuild" \) -exec sed -i 's|"kernelsu/"|kernelsu/|g' {} + || true
-
       - name: ⚙️ Generate Kernel Configuration
         run: |
           export ARCH=arm64
@@ -166,3 +157,4 @@ jobs:
           path: |
             Final_Kernel/TabA9Plus-KSU-Kernel.tar
             Final_Kernel/TabA9Plus-KSU-AnyKernel3.zip
+
