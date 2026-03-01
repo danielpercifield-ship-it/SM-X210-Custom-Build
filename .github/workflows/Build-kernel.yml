@@ -142,13 +142,10 @@ jobs:
               export_symbol "$SERVICES" "selinux_status_update_policyload"
           fi
 
-          # 2. Fix the header visibility
-          # This forces the symbols to be seen as 'extern' by KernelSU
+          # 2. Fix the header visibility (Foolproof single-line echoes)
           echo "Updating security.h..."
-          cat <<EOF >> security/selinux/include/security.h
-          extern struct selinux_state selinux_state;
-          extern struct lsm_blob_sizes selinux_blob_sizes;
-          EOF   
+          echo "extern struct selinux_state selinux_state;" >> security/selinux/include/security.h
+          echo "extern struct lsm_blob_sizes selinux_blob_sizes;" >> security/selinux/include/security.h
     
       - name: ⚙️ Generate Kernel Configuration
         run: |
@@ -203,6 +200,7 @@ jobs:
           #endif
           #endif
           EOF
+          
           cat <<EOF > security/selinux/include/av_permissions.h
           #ifndef _SELINUX_AV_PERMISSIONS_H_
           #define _SELINUX_AV_PERMISSIONS_H_
@@ -232,7 +230,7 @@ jobs:
           OBJDUMP=llvm-objdump \
           STRIP=llvm-strip \
           HOSTCC=gcc \
-          -j1 \
+          -j$(nproc --all) \
           KCFLAGS="-Wno-error=implicit-function-declaration -Wno-error=implicit-int -Wno-error=int-conversion -Wno-error=unused-but-set-variable -Wno-error=strict-prototypes -Isecurity/selinux/include" \
           Image || echo "✅ First pass completed. KSU patched the tree. Starting Pass 2..."
           
