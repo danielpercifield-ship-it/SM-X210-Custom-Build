@@ -17,13 +17,12 @@ jobs:
         uses: actions/checkout@v4
 
       - name: 🗄️ Restore Compiler Cache
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: .ccache
           key: ksu-ccache-${{ github.run_id }}
           restore-keys: |
             ksu-ccache-
-          save-always: 'true'
  
       - name: 📥 Integrate KernelSU-Next
         run: |
@@ -89,34 +88,24 @@ jobs:
           sed -i 's|"../../inc/tcpci.h"|"../inc/tcpci.h"|g' drivers/usb/typec/P86801_tcpc/aw35615/aw35615_driver.c || true
           sed -i 's|"../inc/tcpci.h"|"inc/tcpci.h"|g' drivers/usb/typec/P86801_tcpc/tcpci_core.c || true
           
-      - name: 🔑 Force Linker to Keep SELinux Symbols (Word Boundary Mode)
+      - name: 🔑 Force Linker to Keep SELinux Symbols
         run: |
-          # 1. Clean existing exports to prevent duplicate definition errors
-          SYMS="selinux_state selinux_blob_sizes hashtab_search hashtab_insert ebitmap_set_bit ebitmap_get_bit avtab_search_node avtab_search_node_next avtab_insert_nonunique avc_ss_reset selnl_notify_policyload selinux_status_update_policyload"
-          for sym in $SYMS; do
-              find security/selinux -name "*.c" -exec sed -i "/EXPORT_SYMBOL.*($sym)/d" {} + || true
-          done
+          # 1. Surgically strip 'static' from definitions in .c files to make them global
+          sed -i 's/static struct selinux_state selinux_state/struct selinux_state selinux_state/g' security/selinux/hooks.c || true
+          sed -i 's/static struct lsm_blob_sizes selinux_blob_sizes/struct lsm_blob_sizes selinux_blob_sizes/g' security/selinux/hooks.c || true
+          sed -i 's/static int hashtab_search/int hashtab_search/g' security/selinux/ss/hashtab.c || true
+          sed -i 's/static int hashtab_insert/int hashtab_insert/g' security/selinux/ss/hashtab.c || true
+          sed -i 's/static int ebitmap_set_bit/int ebitmap_set_bit/g' security/selinux/ss/ebitmap.c || true
+          sed -i 's/static int ebitmap_get_bit/int ebitmap_get_bit/g' security/selinux/ss/ebitmap.c || true
+          sed -i 's/static struct avtab_node \*avtab_search_node(/struct avtab_node *avtab_search_node(/g' security/selinux/ss/avtab.c || true
+          sed -i 's/static struct avtab_node \*avtab_search_node_next/struct avtab_node *avtab_search_node_next/g' security/selinux/ss/avtab.c || true
+          sed -i 's/static struct avtab_node \*avtab_insert_nonunique/struct avtab_node *avtab_insert_nonunique/g' security/selinux/ss/avtab.c || true
+          sed -i 's/static void avc_ss_reset/void avc_ss_reset/g' security/selinux/avc.c || true
+          sed -i 's/static void selnl_notify_policyload/void selnl_notify_policyload/g' security/selinux/netlink.c || true
+          sed -i 's/static void selinux_status_update_policyload/void selinux_status_update_policyload/g' security/selinux/ss/services.c || true
+          sed -i 's/static void selinux_status_update_policyload/void selinux_status_update_policyload/g' security/selinux/status.c || true
 
-          # 2. Use pure word boundaries to strip 'static' exactly where it matters.
-          perl -pi -e 's/\bstatic\s+struct\s+selinux_state\s+selinux_state/struct selinux_state selinux_state/g' security/selinux/hooks.c
-          perl -pi -e 's/\bstatic\s+struct\s+lsm_blob_sizes\s+selinux_blob_sizes/struct lsm_blob_sizes selinux_blob_sizes/g' security/selinux/hooks.c
-          perl -pi -e 's/\bstatic\s+int\s+hashtab_search/int hashtab_search/g' security/selinux/ss/hashtab.c
-          perl -pi -e 's/\bstatic\s+int\s+hashtab_insert/int hashtab_insert/g' security/selinux/ss/hashtab.c
-          perl -pi -e 's/\bstatic\s+int\s+ebitmap_set_bit/int ebitmap_set_bit/g' security/selinux/ss/ebitmap.c
-          perl -pi -e 's/\bstatic\s+int\s+ebitmap_get_bit/int ebitmap_get_bit/g' security/selinux/ss/ebitmap.c
-          perl -pi -e 's/\bstatic\s+struct\s+avtab_node\s*\*\s*avtab_search_node\(/struct avtab_node *avtab_search_node(/g' security/selinux/ss/avtab.c
-          perl -pi -e 's/\bstatic\s+struct\s+avtab_node\s*\*\s*avtab_search_node_next/struct avtab_node *avtab_search_node_next/g' security/selinux/ss/avtab.c
-          perl -pi -e 's/\bstatic\s+struct\s+avtab_node\s*\*\s*avtab_insert_nonunique/struct avtab_node *avtab_insert_nonunique/g' security/selinux/ss/avtab.c
-          perl -pi -e 's/\bstatic\s+void\s+avc_ss_reset/void avc_ss_reset/g' security/selinux/avc.c
-          perl -pi -e 's/\bstatic\s+void\s+selnl_notify_policyload/void selnl_notify_policyload/g' security/selinux/netlink.c
-          
-          if [ -f security/selinux/status.c ]; then
-              perl -pi -e 's/\bstatic\s+void\s+selinux_status_update_policyload/void selinux_status_update_policyload/g' security/selinux/status.c
-          else
-              perl -pi -e 's/\bstatic\s+void\s+selinux_status_update_policyload/void selinux_status_update_policyload/g' security/selinux/ss/services.c
-          fi
-
-          # 3. Inject EXPORT_SYMBOL_GPL at the end of files
+          # 2. Inject EXPORT_SYMBOL_GPL at the end of files
           echo -e "\n#include <linux/export.h>\nEXPORT_SYMBOL_GPL(selinux_state);" >> security/selinux/hooks.c
           echo "EXPORT_SYMBOL_GPL(selinux_blob_sizes);" >> security/selinux/hooks.c
           echo -e "\n#include <linux/export.h>\nEXPORT_SYMBOL_GPL(hashtab_search);" >> security/selinux/ss/hashtab.c
@@ -135,15 +124,7 @@ jobs:
               echo -e "\n#include <linux/export.h>\nEXPORT_SYMBOL_GPL(selinux_status_update_policyload);" >> security/selinux/ss/services.c
           fi
           
-          # 4. Inject EXTERN into the Linker Script to stop LTO stripping
-          LDS="arch/arm64/kernel/vmlinux.lds.S"
-          if [ -f "$LDS" ]; then
-              for sym in $SYMS; do
-                  sed -i "1i EXTERN($sym)" "$LDS"
-              done
-          fi
-          
-          # 5. Global Header Visibility
+          # 3. Global Header Visibility
           echo -e "\nextern struct selinux_state selinux_state;" >> security/selinux/include/security.h
           echo -e "\nextern struct lsm_blob_sizes selinux_blob_sizes;" >> security/selinux/include/security.h
           
@@ -217,34 +198,13 @@ jobs:
           cp security/selinux/include/flask.h drivers/kernelsu/flask.h
           cp security/selinux/include/av_permissions.h drivers/kernelsu/av_permissions.h
       
-      - name: 🔨 Compile Kernel (DOUBLE MAKE RESTORED)
+      - name: 🔨 Compile Kernel (DOUBLE MAKE WITH FORCED REBUILD)
         run: |
           export CCACHE_DIR=$GITHUB_WORKSPACE/.ccache
           ccache -M 5G
           
-          # Added -fno-lto to explicitly ban Clang from optimizing away our exports
-          make ARCH=arm64 \
-          CC="ccache clang --target=aarch64-linux-gnu" \
-          CROSS_COMPILE=aarch64-linux-gnu- \
-          LD=ld.lld \
-          AR=llvm-ar \
-          NM=llvm-nm \
-          OBJCOPY=llvm-objcopy \
-          OBJDUMP=llvm-objdump \
-          STRIP=llvm-strip \
-          HOSTCC=gcc \
-          -j$(nproc --all) \
-          KCFLAGS="-Wno-error=implicit-function-declaration \
-                   -Wno-error=implicit-int \
-                   -Wno-error=int-conversion \
-                   -Wno-error=unused-but-set-variable \
-                   -Wno-error=strict-prototypes \
-                   -Wno-error=incompatible-pointer-types \
-                   -Wno-error=format-invalid-specifier \
-                   -fno-lto \
-                   -I$(pwd)/security/selinux/include \
-                   -I$(pwd)/drivers" \
-          Image || echo "✅ First pass completed. KSU patched the tree. Starting Pass 2..."
+          # We add LDFLAGS to explicitly force the linker to hold onto the SELinux symbols
+          export KBUILD_LDFLAGS="-u selinux_state -u selinux_blob_sizes -u hashtab_search -u hashtab_insert -u ebitmap_set_bit -u ebitmap_get_bit -u avtab_search_node -u avtab_search_node_next -u avtab_insert_nonunique -u avc_ss_reset -u selnl_notify_policyload -u selinux_status_update_policyload"
           
           make ARCH=arm64 \
           CC="ccache clang --target=aarch64-linux-gnu" \
@@ -257,17 +217,35 @@ jobs:
           STRIP=llvm-strip \
           HOSTCC=gcc \
           -j$(nproc --all) \
-          KCFLAGS="-Wno-error=implicit-function-declaration \
-                   -Wno-error=implicit-int \
-                   -Wno-error=int-conversion \
-                   -Wno-error=unused-but-set-variable \
-                   -Wno-error=strict-prototypes \
-                   -Wno-error=incompatible-pointer-types \
-                   -Wno-error=format-invalid-specifier \
-                   -fno-lto \
-                   -I$(pwd)/security/selinux/include \
-                   -I$(pwd)/drivers" \
-          Image
+          KCFLAGS="-Wno-error=implicit-function-declaration -Wno-error=implicit-int -Wno-error=int-conversion -Wno-error=unused-but-set-variable -Wno-error=strict-prototypes -Wno-error=incompatible-pointer-types -Wno-error=format-invalid-specifier -fno-lto -I$(pwd)/security/selinux/include -I$(pwd)/drivers" \
+          Image || {
+              echo "✅ First pass completed. KSU patched the tree."
+              echo "🧹 Deleting stale filesystem objects to force recompilation of injected hooks..."
+              # CRITICAL: We delete the object files that KSU modified so Make is forced to rebuild them!
+              rm -f fs/namespace.o fs/open.o fs/read_write.o fs/stat.o fs/exec.o
+              
+              echo "🚀 Starting Pass 2..."
+              make ARCH=arm64 \
+              CC="ccache clang --target=aarch64-linux-gnu" \
+              CROSS_COMPILE=aarch64-linux-gnu- \
+              LD=ld.lld \
+              AR=llvm-ar \
+              NM=llvm-nm \
+              OBJCOPY=llvm-objcopy \
+              OBJDUMP=llvm-objdump \
+              STRIP=llvm-strip \
+              HOSTCC=gcc \
+              -j$(nproc --all) \
+              KCFLAGS="-Wno-error=implicit-function-declaration -Wno-error=implicit-int -Wno-error=int-conversion -Wno-error=unused-but-set-variable -Wno-error=strict-prototypes -Wno-error=incompatible-pointer-types -Wno-error=format-invalid-specifier -fno-lto -I$(pwd)/security/selinux/include -I$(pwd)/drivers" \
+              Image
+          }
+          
+      - name: 💾 Save Compiler Cache
+        uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: .ccache
+          key: ksu-ccache-${{ github.run_id }}
           
       - name: 📦 Package Output
         run: |
