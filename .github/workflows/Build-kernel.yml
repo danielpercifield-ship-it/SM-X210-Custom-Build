@@ -27,192 +27,62 @@ jobs:
       - name: 📥 Integrate KernelSU-Next
         run: |
           rm -rf drivers/kernelsu
-          
-          # === REPAIR ACCIDENTAL MAKEFILE DELETION ===
           if ! grep -q "kernel/ certs/ mm/" Makefile; then
               sed -i '/core-y.*:=.*init/a core-y += kernel/ certs/ mm/ fs/ ipc/ security/ crypto/ block/' Makefile
           fi
-          
-          # Safely scrub any lingering quoted KSU strings from Makefiles
-          sed -i 's|"drivers/kernelsu/"||g' Makefile || true
-          sed -i 's|drivers/kernelsu/||g' Makefile || true
-          sed -i 's|kernelsu/||g' Makefile || true
-          sed -i 's/""//g' Makefile || true
-          sed -i 's/""//g' arch/arm64/Makefile || true
-          
-          # Clone KSU-Next legacy
           git clone -b legacy https://github.com/KernelSU-Next/KernelSU-Next /tmp/ksun
           mv /tmp/ksun/kernel drivers/kernelsu
-          
           sed -i '/kernelsu/d' drivers/Makefile || true
           echo "obj-y += kernelsu/" >> drivers/Makefile
      
-      - name: 🩹 Apply Deep Source Code Fixes
+      - name: 🩹 Final Code Fixes
         run: |
-          # 1. FIX VDSO OFFSETS 
-          VDSO_H="arch/arm64/include/asm/vdso.h"
-          if [ -f "$VDSO_H" ]; then
-              sed -i '/extern unsigned long vdso_offset_/d' "$VDSO_H"
-          fi
-
-          # 2. FIX WALT TRACE PATH
-          TRACE_HEADER="kernel/sched/walt/trace.h"
-          if [ -f "$TRACE_HEADER" ]; then
-              sed -i '/#define TRACE_INCLUDE_PATH/c\#define TRACE_INCLUDE_PATH ../../kernel/sched/walt' "$TRACE_HEADER"
-          fi
-
-          # 3. Fix KernelSU SELinux logic for 5.4 API
-          find drivers/kernelsu/selinux -type f -name "*.c" -exec sed -i 's|selinux_status_update_policyload(0);|selinux_status_update_policyload(\&selinux_state, 0);|g' {} + || true
-          find drivers/kernelsu/selinux -type f -name "*.c" -exec sed -i 's|selinux_status_update_policyload(1);|selinux_status_update_policyload(\&selinux_state, 1);|g' {} + || true
-          sed -i 's|db = \&policydb;|db = \&selinux_state.ss->policydb;|g' drivers/kernelsu/selinux/rules.c || true
-
-          # 4. Fix Architecture/Stack Fixes (KGDB/SP)
+          # Architecture & BPF fixes
+          sed -i '/extern unsigned long vdso_offset_/d' arch/arm64/include/asm/vdso.h || true
+          sed -i '/#define TRACE_INCLUDE_PATH/c\#define TRACE_INCLUDE_PATH ../../kernel/sched/walt' kernel/sched/walt/trace.h || true
           sed -i 's|register unsigned long current_stack_pointer asm ("sp");|#define current_stack_pointer ({ unsigned long sp; asm("mov %0, sp" : "=r"(sp)); sp; })|g' arch/arm64/include/asm/stack_pointer.h || true
-          sed -i 's|"brk %0" : : "I"|"brk %0" : : "n"|g' arch/arm64/include/asm/kgdb.h || true   
           
-          # 5. THE SYMLINK CHEAT CODE
-          mkdir -p drivers/kernelsu/kernel
-          ln -s ../ksu.h drivers/kernelsu/kernel/ksu.h || true
-          
-          # 6. ROBUST SECCOMP STRIP
-          sed -i '/current->seccomp\.mode =/d' drivers/kernelsu/app_profile.c || true
-          sed -i '/current->seccomp\.filter =/d' drivers/kernelsu/app_profile.c || true
-          sed -i 's/!!!current->seccomp\.mode/0/g' drivers/kernelsu/app_profile.c || true
-          
-          # 7. SAMSUNG DUMMY STUBS
-          echo -e "\nvoid handle_decomp_fail(void) {}\nvoid md_dump_slabinfo(void) {}\n" >> init/main.c
-          
-          # 8. FIX SAMSUNG USB-C TYPOS
+          # Samsung USB-C Typos
           sed -i 's|"inc/tcpci.h"|"tcpci.h"|g' drivers/usb/typec/P86801_tcpc/inc/pd_dpm_pdo_select.h || true
           sed -i 's|"../inc/tcpci.h"|"inc/tcpci.h"|g' drivers/usb/typec/P86801_tcpc/tcpc_rt1711h.c || true
           sed -i 's|"../../inc/tcpci.h"|"../inc/tcpci.h"|g' drivers/usb/typec/P86801_tcpc/aw35615/aw35615_driver.c || true
-          sed -i 's|"../inc/tcpci.h"|"inc/tcpci.h"|g' drivers/usb/typec/P86801_tcpc/tcpci_core.c || true
+          
+          # Stub missing Samsung symbols
+          echo -e "\nvoid handle_decomp_fail(void) {}\nvoid md_dump_slabinfo(void) {}\n" >> init/main.c
+          
+          # Symlink ksu include path
+          mkdir -p drivers/kernelsu/kernel
+          ln -s ../ksu.h drivers/kernelsu/kernel/ksu.h || true
 
-      - name: 🔑 Force Linker to Keep SELinux Symbols (Perl Nuke)
-        run: |
-          # 1. Strip 'static' from symbols regardless of return types or whitespace
-          # This handles struct ptrs, void, int, etc.
-          SYMS="selinux_state selinux_blob_sizes hashtab_search hashtab_insert ebitmap_set_bit ebitmap_get_bit avtab_search_node avtab_search_node_next avtab_insert_nonunique avc_ss_reset selnl_notify_policyload selinux_status_update_policyload"
-          for sym in $SYMS; do
-              find security/selinux -name "*.c" -exec perl -pi -e "s/static\s+(.*?$sym)/\$1/g" {} +
-              find security/selinux -name "*.c" -exec sed -i "/EXPORT_SYMBOL.*($sym)/d" {} + || true
-          done
-
-          # 2. Re-inject Exports with correct header
-          echo -e "\n#include <linux/export.h>\nEXPORT_SYMBOL_GPL(selinux_state);" >> security/selinux/hooks.c
-          echo "EXPORT_SYMBOL_GPL(selinux_blob_sizes);" >> security/selinux/hooks.c
-          echo -e "\n#include <linux/export.h>\nEXPORT_SYMBOL_GPL(hashtab_search);" >> security/selinux/ss/hashtab.c
-          echo "EXPORT_SYMBOL_GPL(hashtab_insert);" >> security/selinux/ss/hashtab.c
-          echo -e "\n#include <linux/export.h>\nEXPORT_SYMBOL_GPL(ebitmap_set_bit);" >> security/selinux/ss/ebitmap.c
-          echo "EXPORT_SYMBOL_GPL(ebitmap_get_bit);" >> security/selinux/ss/ebitmap.c
-          echo -e "\n#include <linux/export.h>\nEXPORT_SYMBOL_GPL(avtab_search_node);" >> security/selinux/ss/avtab.c
-          echo "EXPORT_SYMBOL_GPL(avtab_search_node_next);" >> security/selinux/ss/avtab.c
-          echo "EXPORT_SYMBOL_GPL(avtab_insert_nonunique);" >> security/selinux/ss/avtab.c
-          echo -e "\n#include <linux/export.h>\nEXPORT_SYMBOL_GPL(avc_ss_reset);" >> security/selinux/avc.c
-          echo -e "\n#include <linux/export.h>\nEXPORT_SYMBOL_GPL(selnl_notify_policyload);" >> security/selinux/netlink.c
-          
-          if [ -f security/selinux/status.c ]; then
-              echo -e "\n#include <linux/export.h>\nEXPORT_SYMBOL_GPL(selinux_status_update_policyload);" >> security/selinux/status.c
-          else
-              echo -e "\n#include <linux/export.h>\nEXPORT_SYMBOL_GPL(selinux_status_update_policyload);" >> security/selinux/ss/services.c
-          fi
-          
-          # 3. Global Header Visibility
-          echo "extern struct selinux_state selinux_state;" >> security/selinux/include/security.h
-          echo "extern struct lsm_blob_sizes selinux_blob_sizes;" >> security/selinux/include/security.h
-          
-      - name: ⚙️ Generate Kernel Configuration
+      - name: ⚙️ Kernel Config
         run: |
           export ARCH=arm64
-          find . -type f -name "Kconfig*" -exec dos2unix {} + || true
-          chmod -R 755 scripts/
-          find . -type f -name "*.sh" -exec chmod +x {} +
-          touch drivers/kernelsu/Kconfig
-          
           DEFCONFIG_FILE=$(find . -name "gta9pwifi_eur_open_defconfig" | head -n 1)
           cp "$DEFCONFIG_FILE" arch/arm64/configs/gta9pwifi_eur_open_defconfig
           
           make ARCH=arm64 HOSTCC=gcc CC="clang --target=aarch64-linux-gnu" CROSS_COMPILE=aarch64-linux-gnu- gta9pwifi_eur_open_defconfig
           
-          # Enable KSU Configs
           ./scripts/config --file .config --enable KSU
           ./scripts/config --file .config --enable KSU_NEXT
-          ./scripts/config --file .config --enable KSU_NEXT_MANUAL_HOOK
-          ./scripts/config --file .config --disable TRIM_UNUSED_KSYMS
-          ./scripts/config --file .config --disable LTO
+          ./scripts/config --file .config --enable SECURITY_SELINUX
           ./scripts/config --file .config --disable LTO_CLANG
+          ./scripts/config --file .config --disable TRIM_UNUSED_KSYMS
           
           make ARCH=arm64 HOSTCC=gcc CC="clang --target=aarch64-linux-gnu" CROSS_COMPILE=aarch64-linux-gnu- olddefconfig
    
-      - name: 🔨 Resolve SELinux Headers
-        run: |
-          mkdir -p security/selinux/include
-          mkdir -p drivers/kernelsu
-          
-          cat <<EOF > security/selinux/include/flask.h
-          #ifndef _SELINUX_FLASK_H_
-          #define _SELINUX_FLASK_H_
-          #define SECCLASS_PROCESS 1
-          #define SECCLASS_FILE 2
-          #define SECINITSID_KERNEL 1
-          #define SECINITSID_SECURITY 2
-          #define SECINITSID_UNLABELED 3
-          #define SECINITSID_NUM 27
-          #endif
-          EOF
-          cat <<EOF > security/selinux/include/av_permissions.h
-          #ifndef _SELINUX_AV_PERMISSIONS_H_
-          #define _SELINUX_AV_PERMISSIONS_H_
-          #define PROCESS__TRANSITION 0x00000001UL
-          #define PROCESS__DYNTRANSITION 0x00000002UL
-          #define PROCESS__SETFSCREATE 0x00000004UL
-          #define FILE__READ 0x00000001UL
-          #define FILE__WRITE 0x00000002UL
-          #endif
-          EOF
-          
-          cp security/selinux/include/flask.h drivers/kernelsu/flask.h
-          cp security/selinux/include/av_permissions.h drivers/kernelsu/av_permissions.h
-      
-      - name: 🔨 Compile Kernel (DOUBLE MAKE WITH FORCED REBUILD)
+      - name: 🔨 Compile (Pass 1 & Pass 2 Rebuild)
         run: |
           export CCACHE_DIR=$GITHUB_WORKSPACE/.ccache
           ccache -M 5G
           
-          make ARCH=arm64 \
-          CC="ccache clang --target=aarch64-linux-gnu" \
-          CROSS_COMPILE=aarch64-linux-gnu- \
-          LD=ld.lld \
-          AR=llvm-ar \
-          NM=llvm-nm \
-          OBJCOPY=llvm-objcopy \
-          OBJDUMP=llvm-objdump \
-          STRIP=llvm-strip \
-          HOSTCC=gcc \
-          -j$(nproc --all) \
-          KCFLAGS="-Wno-error=implicit-function-declaration -Wno-error=implicit-int -Wno-error=int-conversion -Wno-error=unused-but-set-variable -Wno-error=strict-prototypes -Wno-error=incompatible-pointer-types -Wno-error=format-invalid-specifier -I$(pwd)/security/selinux/include -I$(pwd)/drivers" \
-          Image || {
-              echo "✅ Pass 1 finished. KSU patched the tree."
-              
-              # CRITICAL: We delete the object files so Make is forced to rebuild them!
-              echo "🧹 Clearing stale objects to force hook integration..."
-              find fs -name "*.o" -type f -delete
-              find security/selinux -name "*.o" -type f -delete
-              
-              echo "🚀 Starting Pass 2..."
-              make ARCH=arm64 \
-              CC="ccache clang --target=aarch64-linux-gnu" \
-              CROSS_COMPILE=aarch64-linux-gnu- \
-              LD=ld.lld \
-              AR=llvm-ar \
-              NM=llvm-nm \
-              OBJCOPY=llvm-objcopy \
-              OBJDUMP=llvm-objdump \
-              STRIP=llvm-strip \
-              HOSTCC=gcc \
-              -j$(nproc --all) \
-              KCFLAGS="-Wno-error=implicit-function-declaration -Wno-error=implicit-int -Wno-error=int-conversion -Wno-error=unused-but-set-variable -Wno-error=strict-prototypes -Wno-error=incompatible-pointer-types -Wno-error=format-invalid-specifier -I$(pwd)/security/selinux/include -I$(pwd)/drivers" \
-              Image
+          FLAGS="ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- LLVM=1 LLVM_IAS=1 HOSTCC=gcc -j$(nproc --all)"
+          K_CFLAGS="-Wno-error=implicit-function-declaration -Wno-error=strict-prototypes -I$(pwd)/security/selinux/include -I$(pwd)/drivers"
+          
+          # Pass 1 patches the tree, Pass 2 builds the new namespace logic
+          make $FLAGS KCFLAGS="$K_CFLAGS" Image || {
+              echo "✅ Pass 1 complete. Forcing rebuild of filesystem and SELinux..."
+              rm -f fs/namespace.o security/selinux/*.o
+              make $FLAGS KCFLAGS="$K_CFLAGS" Image
           }
           
       - name: 💾 Save Compiler Cache
@@ -224,23 +94,19 @@ jobs:
           
       - name: 📦 Package Output
         run: |
-          mkdir -p Final_Kernel
           if [ -f arch/arm64/boot/Image ]; then
-            cp arch/arm64/boot/Image Final_Kernel/
-            echo "Build Success"
+            git clone https://github.com/osm0sis/AnyKernel3.git
+            sed -i 's/do.devicecheck=1/do.devicecheck=0/g' AnyKernel3/anykernel.sh
+            cp arch/arm64/boot/Image AnyKernel3/
+            cd AnyKernel3 && zip -r9 ../TabA9Plus-KSU-Kernel.zip *
           else
-            echo "Build Failed"
+            echo "::error::Kernel image not found. Build failed."
             exit 1
           fi
-          
-          # Create Flashable Zip (AnyKernel3)
-          git clone https://github.com/osm0sis/AnyKernel3.git
-          sed -i 's/do.devicecheck=1/do.devicecheck=0/g' AnyKernel3/anykernel.sh
-          cp Final_Kernel/Image AnyKernel3/
-          cd AnyKernel3 && zip -r9 ../TabA9Plus-KSU-Kernel.zip *
     
       - name: 📤 Upload Artifact
         uses: actions/upload-artifact@v4
         with:
           name: TabA9Plus-Kernel
           path: TabA9Plus-KSU-Kernel.zip
+
