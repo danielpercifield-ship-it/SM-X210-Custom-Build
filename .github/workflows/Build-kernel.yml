@@ -46,7 +46,8 @@ jobs:
           
           sed -i '/kernelsu/d' drivers/Makefile || true
           echo "obj-y += kernelsu/" >> drivers/Makefile
-                - name: 🩹 Apply Deep Source Code Fixes
+      
+      - name: 🩹 Apply Deep Source Code Fixes
         run: |
           # 1. FIX VDSO OFFSETS 
           VDSO_H="arch/arm64/include/asm/vdso.h"
