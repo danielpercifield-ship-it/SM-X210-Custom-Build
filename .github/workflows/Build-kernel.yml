@@ -35,7 +35,7 @@ jobs:
           sed -i '/kernelsu/d' drivers/Makefile || true
           echo "obj-y += kernelsu/" >> drivers/Makefile
      
-      - name: 🩹 Final Code Fixes
+      - name: 🩹 Final Code Fixes & Permissions
         run: |
           # 1. FIX PERMISSIONS & LINE ENDINGS
           chmod -R +x scripts/
@@ -53,9 +53,7 @@ jobs:
           sed -i 's|"../inc/tcpci.h"|"inc/tcpci.h"|g' drivers/usb/typec/P86801_tcpc/tcpc_rt1711h.c || true
           sed -i 's|"../../inc/tcpci.h"|"../inc/tcpci.h"|g' drivers/usb/typec/P86801_tcpc/aw35615/aw35615_driver.c || true
           
-          # 4. KSU HEADER PLUMBING (Solves 'flask.h not found')
-          cp security/selinux/include/flask.h drivers/kernelsu/
-          cp security/selinux/include/av_permissions.h drivers/kernelsu/
+          # 4. KSU SYMLINKS
           mkdir -p drivers/kernelsu/kernel
           ln -s ../ksu.h drivers/kernelsu/kernel/ksu.h || true
 
@@ -84,7 +82,8 @@ jobs:
           ccache -M 5G
           
           FLAGS="ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- LLVM=1 LLVM_IAS=1 HOSTCC=gcc -j$(nproc --all)"
-          K_CFLAGS="-Wno-error=implicit-function-declaration -Wno-error=strict-prototypes -I$(pwd)/security/selinux/include -I$(pwd)/drivers"
+          # Added search paths for generated SELinux headers
+          K_CFLAGS="-Wno-error=implicit-function-declaration -Wno-error=strict-prototypes -I$(pwd)/security/selinux -I$(pwd)/security/selinux/include -I$(pwd)/drivers"
           
           make $FLAGS KCFLAGS="$K_CFLAGS" Image || {
               echo "✅ Pass 1 complete. Forcing rebuild of filesystem and SELinux..."
