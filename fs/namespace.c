@@ -1660,7 +1660,8 @@ static int do_umount(struct mount *mnt, int flags)
 			return -EPERM;
 		return do_umount_root(sb);
 	}
-
+    EXPORT_SYMBOL_GPL(path_umount);
+	
 	namespace_lock();
 	lock_mount_hash();
 
