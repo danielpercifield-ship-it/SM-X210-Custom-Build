@@ -77,16 +77,23 @@ jobs:
           sed -i 's|register unsigned long current_stack_pointer asm ("sp");|#define current_stack_pointer ({ unsigned long sp; asm("mov %0, sp" : "=r"(sp)); sp; })|g' arch/arm64/include/asm/stack_pointer.h || true
           sed -i 's|"brk %0" : : "I"|"brk %0" : : "n"|g' arch/arm64/include/asm/kgdb.h || true   
           
-          # 6. ROBUST SECCOMP STRIP (BULLETPROOF FIND)
-          find drivers/kernelsu -type f -name "app_profile.c" -exec sed -i 's/current->seccomp.mode/0/g' {} + || true
-          find drivers/kernelsu -type f -name "app_profile.c" -exec sed -i 's/current->seccomp.filter/NULL/g' {} + || true
+          # 6. THE SYMLINK CHEAT CODE (Bypasses all KSU include errors)
+          mkdir -p drivers/kernelsu/kernel
+          ln -s ../ksu.h drivers/kernelsu/kernel/ksu.h || true
           
-          # 7. SAMSUNG DUMMY STUBS
+          # 7. ROBUST SECCOMP STRIP (SAFELY DELETES ASSIGNMENTS)
+          sed -i '/current->seccomp\.mode =/d' drivers/kernelsu/app_profile.c || true
+          sed -i '/current->seccomp\.filter =/d' drivers/kernelsu/app_profile.c || true
+          sed -i 's/!!!current->seccomp\.mode/0/g' drivers/kernelsu/app_profile.c || true
+          
+          # 8. SAMSUNG DUMMY STUBS
           echo -e "\nvoid handle_decomp_fail(void) {}\nvoid md_dump_slabinfo(void) {}\n" >> init/main.c
           
-          # 8. FIX SAMSUNG USB-C TYPO (CARPET BOMB)
-          find drivers/usb/typec -type f -exec sed -i 's|"inc/tcpci.h"|"tcpci.h"|g' {} + || true
-          find drivers/usb/typec -type f -exec sed -i 's|<inc/tcpci.h>|<tcpci.h>|g' {} + || true
+          # 9. FIX SAMSUNG USB-C TYPO - PROPER PATH HANDLING
+          find drivers/usb/typec/P86801_tcpc -type f -name "*.c" -exec sed -i 's|#include "inc/tcpci\.h"|#include "../inc/tcpci.h"|g' {} + || true
+          find drivers/usb/typec/P86801_tcpc -type f -name "*.h" -exec sed -i 's|#include "inc/tcpci\.h"|#include "../inc/tcpci.h"|g' {} + || true
+          find drivers/usb/typec/P86801_tcpc/aw35615 -type f -name "*.c" -exec sed -i 's|#include "\.\.\/inc/tcpci\.h"|#include "../../inc/tcpci.h"|g' {} + || true
+          sed -i 's|#include "tcpci.h"|#include "../inc/tcpci.h"|g' drivers/usb/typec/P86801_tcpc/tcpc_rt1711h.c || true
     
       - name: 🔑 Brute Force Export Symbols
         run: |
@@ -195,7 +202,7 @@ jobs:
           ccache -M 5G
           
           # Pass 1 catches KSU's auto-patcher mid-flight
-          # Notice the NEW "-I$(pwd)/drivers" flag to fix all include paths!
+          # Includes the global -I$(pwd)/drivers flag so KSU headers are always found
           make ARCH=arm64 \
           CC="ccache clang --target=aarch64-linux-gnu" \
           CROSS_COMPILE=aarch64-linux-gnu- \
