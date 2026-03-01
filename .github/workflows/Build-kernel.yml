@@ -89,37 +89,58 @@ jobs:
           # 8. SAMSUNG DUMMY STUBS
           echo -e "\nvoid handle_decomp_fail(void) {}\nvoid md_dump_slabinfo(void) {}\n" >> init/main.c
           
-          # 9. FIX SAMSUNG USB-C TYPO (Precise Sniper Shot)
-          # We only fix the ONE file that is actually broken.
-          find drivers/usb/typec -name "pd_dpm_pdo_select.h" -exec sed -i 's|"inc/tcpci.h"|"tcpci.h"|g' {} + || true
+          # 9. FIX SAMSUNG USB-C TYPO - PROPER PATH HANDLING
+          find drivers/usb/typec/P86801_tcpc -type f -name "*.c" -exec sed -i 's|#include "inc/tcpci\.h"|#include "../inc/tcpci.h"|g' {} + || true
+          find drivers/usb/typec/P86801_tcpc -type f -name "*.h" -exec sed -i 's|#include "inc/tcpci\.h"|#include "../inc/tcpci.h"|g' {} + || true
+          find drivers/usb/typec/P86801_tcpc/aw35615 -type f -name "*.c" -exec sed -i 's|#include "\.\.\/inc/tcpci\.h"|#include "../../inc/tcpci.h"|g' {} + || true
+          sed -i 's|#include "tcpci.h"|#include "../inc/tcpci.h"|g' drivers/usb/typec/P86801_tcpc/tcpc_rt1711h.c || true
     
-      - name: 🔑 Brute Force Export Symbols
+      - name: 🔑 Force Linker to Keep SELinux Symbols
         run: |
-          nuclear_export() {
+          # 1. Strip static from the source files so they are globally visible
+          strip_static() {
               local sym=$1
-              local file=$(grep -lE "^static.* $sym|^struct.* $sym|^int.* $sym|^void.* $sym" security/selinux/*.c security/selinux/ss/*.c fs/*.c drivers/kernelsu/*.c 2>/dev/null | head -n 1)
+              local file=$(grep -lE "^static.* $sym|^struct.* $sym|^int.* $sym|^void.* $sym" security/selinux/*.c security/selinux/ss/*.c 2>/dev/null | head -n 1)
               if [ -n "$file" ]; then
-                  echo "Nuclear Exporting $sym in $file"
                   sed -i "s/^static //g" "$file"
                   sed -i "s/^static inline //g" "$file"
-                  sed -i "/EXPORT_SYMBOL.*($sym)/d" "$file"
-                  echo "EXPORT_SYMBOL_GPL($sym);" >> "$file"
               fi
           }
-          nuclear_export "selinux_state"
-          nuclear_export "selinux_blob_sizes"
-          nuclear_export "hashtab_search"
-          nuclear_export "hashtab_insert"
-          nuclear_export "ebitmap_set_bit"
-          nuclear_export "ebitmap_get_bit"
-          nuclear_export "avtab_search_node"
-          nuclear_export "avtab_search_node_next"
-          nuclear_export "avtab_insert_nonunique"
-          nuclear_export "avc_ss_reset"
-          nuclear_export "selnl_notify_policyload"
-          nuclear_export "selinux_status_update_policyload"
-          nuclear_export "do_umount"
           
+          strip_static "selinux_state"
+          strip_static "selinux_blob_sizes"
+          strip_static "hashtab_search"
+          strip_static "hashtab_insert"
+          strip_static "ebitmap_set_bit"
+          strip_static "ebitmap_get_bit"
+          strip_static "avtab_search_node"
+          strip_static "avtab_search_node_next"
+          strip_static "avtab_insert_nonunique"
+          strip_static "avc_ss_reset"
+          strip_static "selnl_notify_policyload"
+          strip_static "selinux_status_update_policyload"
+          
+          # 2. INJECT LINKER KEEPS
+          # We append these commands directly to the core ARM64 linker script
+          LDS="arch/arm64/kernel/vmlinux.lds.S"
+          if [ -f "$LDS" ]; then
+              echo "Injecting EXTERN rules into $LDS"
+              cat <<EOF >> "$LDS"
+          EXTERN(selinux_state)
+          EXTERN(selinux_blob_sizes)
+          EXTERN(hashtab_search)
+          EXTERN(hashtab_insert)
+          EXTERN(ebitmap_set_bit)
+          EXTERN(ebitmap_get_bit)
+          EXTERN(avtab_search_node)
+          EXTERN(avtab_search_node_next)
+          EXTERN(avtab_insert_nonunique)
+          EXTERN(avc_ss_reset)
+          EXTERN(selnl_notify_policyload)
+          EXTERN(selinux_status_update_policyload)
+          EOF
+          fi
+
           # Fix the header visibility
           echo "extern struct selinux_state selinux_state;" >> security/selinux/include/security.h
           echo "extern struct lsm_blob_sizes selinux_blob_sizes;" >> security/selinux/include/security.h
@@ -200,6 +221,7 @@ jobs:
           ccache -M 5G
           
           # Pass 1 catches KSU's auto-patcher mid-flight
+          # Includes the global -I$(pwd)/drivers flag so KSU headers are always found
           make ARCH=arm64 \
           CC="ccache clang --target=aarch64-linux-gnu" \
           CROSS_COMPILE=aarch64-linux-gnu- \
