@@ -35,8 +35,16 @@ jobs:
           sed -i '/kernelsu/d' drivers/Makefile || true
           echo "obj-y += kernelsu/" >> drivers/Makefile
      
-      - name: 🩹 Final Code Fixes
+      - name: 🩹 Final Code Fixes & Permissions
         run: |
+          # FIX PERMISSIONS (Solves your current error)
+          chmod -R +x scripts/
+          find . -type f -name "*.sh" -exec chmod +x {} +
+          
+          # FIX LINE ENDINGS (Solves the 'unsupported character' warnings)
+          find . -type f -name "Kconfig*" -exec dos2unix {} +
+          find . -type f -name "*.sh" -exec dos2unix {} +
+
           # Architecture & BPF fixes
           sed -i '/extern unsigned long vdso_offset_/d' arch/arm64/include/asm/vdso.h || true
           sed -i '/#define TRACE_INCLUDE_PATH/c\#define TRACE_INCLUDE_PATH ../../kernel/sched/walt' kernel/sched/walt/trace.h || true
@@ -78,7 +86,6 @@ jobs:
           FLAGS="ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- LLVM=1 LLVM_IAS=1 HOSTCC=gcc -j$(nproc --all)"
           K_CFLAGS="-Wno-error=implicit-function-declaration -Wno-error=strict-prototypes -I$(pwd)/security/selinux/include -I$(pwd)/drivers"
           
-          # Pass 1 patches the tree, Pass 2 builds the new namespace logic
           make $FLAGS KCFLAGS="$K_CFLAGS" Image || {
               echo "✅ Pass 1 complete. Forcing rebuild of filesystem and SELinux..."
               rm -f fs/namespace.o security/selinux/*.o
@@ -109,4 +116,3 @@ jobs:
         with:
           name: TabA9Plus-Kernel
           path: TabA9Plus-KSU-Kernel.zip
-
