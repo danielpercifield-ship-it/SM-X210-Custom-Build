@@ -89,11 +89,9 @@ jobs:
           # 8. SAMSUNG DUMMY STUBS
           echo -e "\nvoid handle_decomp_fail(void) {}\nvoid md_dump_slabinfo(void) {}\n" >> init/main.c
           
-          # 9. FIX SAMSUNG USB-C TYPO - PROPER PATH HANDLING
-          find drivers/usb/typec/P86801_tcpc -type f -name "*.c" -exec sed -i 's|#include "inc/tcpci\.h"|#include "../inc/tcpci.h"|g' {} + || true
-          find drivers/usb/typec/P86801_tcpc -type f -name "*.h" -exec sed -i 's|#include "inc/tcpci\.h"|#include "../inc/tcpci.h"|g' {} + || true
-          find drivers/usb/typec/P86801_tcpc/aw35615 -type f -name "*.c" -exec sed -i 's|#include "\.\.\/inc/tcpci\.h"|#include "../../inc/tcpci.h"|g' {} + || true
-          sed -i 's|#include "tcpci.h"|#include "../inc/tcpci.h"|g' drivers/usb/typec/P86801_tcpc/tcpc_rt1711h.c || true
+          # 9. FIX SAMSUNG USB-C TYPO (Precise Sniper Shot)
+          # We only fix the ONE file that is actually broken.
+          find drivers/usb/typec -name "pd_dpm_pdo_select.h" -exec sed -i 's|"inc/tcpci.h"|"tcpci.h"|g' {} + || true
     
       - name: 🔑 Brute Force Export Symbols
         run: |
@@ -202,7 +200,6 @@ jobs:
           ccache -M 5G
           
           # Pass 1 catches KSU's auto-patcher mid-flight
-          # Includes the global -I$(pwd)/drivers flag so KSU headers are always found
           make ARCH=arm64 \
           CC="ccache clang --target=aarch64-linux-gnu" \
           CROSS_COMPILE=aarch64-linux-gnu- \
