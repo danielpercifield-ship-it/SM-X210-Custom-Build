@@ -46,20 +46,20 @@ jobs:
           
           sed -i '/kernelsu/d' drivers/Makefile || true
           echo "obj-y += kernelsu/" >> drivers/Makefile
-     
+          
       - name: 🩹 Apply Deep Source Code Fixes
         run: |
-           # 1. FIX VDSO OFFSETS 
-           VDSO_H="arch/arm64/include/asm/vdso.h"
-            if [ -f "$VDSO_H" ]; then
-            sed -i '/extern unsigned long vdso_offset_/d' "$VDSO_H"
-            fi
+          # 1. FIX VDSO OFFSETS 
+          VDSO_H="arch/arm64/include/asm/vdso.h"
+          if [ -f "$VDSO_H" ]; then
+          sed -i '/extern unsigned long vdso_offset_/d' "$VDSO_H"
+          fi
 
-           # 2. FIX WALT TRACE PATH
-           TRACE_HEADER="kernel/sched/walt/trace.h"
-           if [ -f "$TRACE_HEADER" ]; then
-           sed -i '/#define TRACE_INCLUDE_PATH/c\#define TRACE_INCLUDE_PATH ../../kernel/sched/walt' "$TRACE_HEADER"
-           fi
+          # 2. FIX WALT TRACE PATH
+          TRACE_HEADER="kernel/sched/walt/trace.h"
+          if [ -f "$TRACE_HEADER" ]; then
+          sed -i '/#define TRACE_INCLUDE_PATH/c\#define TRACE_INCLUDE_PATH ../../kernel/sched/walt' "$TRACE_HEADER"
+          fi
 
           # 3. Fix path_umount / do_umount in kernel_umount.c
           UM_FILE="drivers/kernelsu/kernel_umount.c"
