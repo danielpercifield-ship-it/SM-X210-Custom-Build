@@ -43,21 +43,25 @@ jobs:
           find . -type f -name "Kconfig*" -exec dos2unix {} +
           find . -type f -name "*.sh" -exec dos2unix {} +
 
-          # 2. ARCHITECTURE & BPF FIXES
+          # 2. AUTO-FIX TECHPACK "IMPLICIT INT" ERRORS (The fix for your current error)
+          # This finds all instances of 'static inline _name' and adds 'u32'
+          find techpack/display -name "*.c" -exec sed -i 's/static inline _/static inline u32 _/g' {} +
+
+          # 3. ARCHITECTURE & BPF FIXES
           sed -i '/extern unsigned long vdso_offset_/d' arch/arm64/include/asm/vdso.h || true
           sed -i '/#define TRACE_INCLUDE_PATH/c\#define TRACE_INCLUDE_PATH ../../kernel/sched/walt' kernel/sched/walt/trace.h || true
           sed -i 's|register unsigned long current_stack_pointer asm ("sp");|#define current_stack_pointer ({ unsigned long sp; asm("mov %0, sp" : "=r"(sp)); sp; })|g' arch/arm64/include/asm/stack_pointer.h || true
           
-          # 3. SAMSUNG USB-C TYPOS
+          # 4. SAMSUNG USB-C TYPOS
           sed -i 's|"inc/tcpci.h"|"tcpci.h"|g' drivers/usb/typec/P86801_tcpc/inc/pd_dpm_pdo_select.h || true
           sed -i 's|"../inc/tcpci.h"|"inc/tcpci.h"|g' drivers/usb/typec/P86801_tcpc/tcpc_rt1711h.c || true
           sed -i 's|"../../inc/tcpci.h"|"../inc/tcpci.h"|g' drivers/usb/typec/P86801_tcpc/aw35615/aw35615_driver.c || true
           
-          # 4. KSU SYMLINKS
+          # 5. KSU SYMLINKS
           mkdir -p drivers/kernelsu/kernel
           ln -s ../ksu.h drivers/kernelsu/kernel/ksu.h || true
 
-          # 5. SAMSUNG SYMBOL STUBS
+          # 6. SAMSUNG SYMBOL STUBS
           echo -e "\nvoid handle_decomp_fail(void) {}\nvoid md_dump_slabinfo(void) {}\n" >> init/main.c
 
       - name: ⚙️ Kernel Config
@@ -82,7 +86,6 @@ jobs:
           ccache -M 5G
           
           FLAGS="ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- LLVM=1 LLVM_IAS=1 HOSTCC=gcc -j$(nproc --all)"
-          # Added search paths for generated SELinux headers
           K_CFLAGS="-Wno-error=implicit-function-declaration -Wno-error=strict-prototypes -I$(pwd)/security/selinux -I$(pwd)/security/selinux/include -I$(pwd)/drivers"
           
           make $FLAGS KCFLAGS="$K_CFLAGS" Image || {
