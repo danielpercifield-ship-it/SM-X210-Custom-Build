@@ -49,23 +49,23 @@ jobs:
      
       - name: 🩹 Apply Deep Source Code Fixes
         run: |
-          # 1. FIX VDSO OFFSETS 
-          VDSO_H="arch/arm64/include/asm/vdso.h"
-          if [ -f "$VDSO_H" ]; then
-              sed -i '/extern unsigned long vdso_offset_/d' "$VDSO_H"
-          fi
+           # 1. FIX VDSO OFFSETS 
+           VDSO_H="arch/arm64/include/asm/vdso.h"
+            if [ -f "$VDSO_H" ]; then
+            sed -i '/extern unsigned long vdso_offset_/d' "$VDSO_H"
+            fi
 
-          # 2. FIX WALT TRACE PATH
-          TRACE_HEADER="kernel/sched/walt/trace.h"
-          if [ -f "$TRACE_HEADER" ]; then
-              sed -i '/#define TRACE_INCLUDE_PATH/c\#define TRACE_INCLUDE_PATH ../../kernel/sched/walt' "$TRACE_HEADER"
-          fi
+           # 2. FIX WALT TRACE PATH
+           TRACE_HEADER="kernel/sched/walt/trace.h"
+           if [ -f "$TRACE_HEADER" ]; then
+           sed -i '/#define TRACE_INCLUDE_PATH/c\#define TRACE_INCLUDE_PATH ../../kernel/sched/walt' "$TRACE_HEADER"
+           fi
 
           # 3. Fix path_umount / do_umount in kernel_umount.c
           UM_FILE="drivers/kernelsu/kernel_umount.c"
           if [ -f "$UM_FILE" ]; then
-              sed -i 's/path_umount(path, flags)/do_umount(path->mnt, flags)/g' "$UM_FILE"
-              sed -i '1i #include <linux/mount.h>\n#include <linux/fs.h>' "$UM_FILE"
+          sed -i 's/path_umount(path, flags)/do_umount(path->mnt, flags)/g' "$UM_FILE"
+          sed -i '1i #include <linux/mount.h>\n#include <linux/fs.h>' "$UM_FILE"
           fi
 
           # 4. Fix KernelSU SELinux logic for 5.4 API
@@ -76,33 +76,31 @@ jobs:
           # 5. Fix Architecture/Stack Fixes (KGDB/SP)
           sed -i 's|register unsigned long current_stack_pointer asm ("sp");|#define current_stack_pointer ({ unsigned long sp; asm("mov %0, sp" : "=r"(sp)); sp; })|g' arch/arm64/include/asm/stack_pointer.h || true
           sed -i 's|"brk %0" : : "I"|"brk %0" : : "n"|g' arch/arm64/include/asm/kgdb.h || true   
-          
-          # 6. THE GLOBAL KSU PATH SHIFT
-          sed -i 's|<kernelsu/ksu.h>|"../kernelsu/ksu.h"|g' drivers/input/input.c || true
-          sed -i 's|<kernelsu/kernel/ksu.h>|"../kernelsu/ksu.h"|g' drivers/input/input.c || true
-          find drivers/input fs kernel -type f -name "*.c" -exec sed -i 's|kernelsu/kernel/ksu.h|kernelsu/ksu.h|g' {} + || true
-          
-          # 7. ROBUST SECCOMP STRIP
+    
+          # 6. FIX KSU HEADER INCLUDE PATHS (CRITICAL FOR 5.4)
+          sed -i 's|#include "../drivers/kernelsu/kernel/ksu.h"|#include "drivers/kernelsu/kernel/ksu.h"|g' fs/open.c || true
+          sed -i 's|#include "../kernelsu/kernel/ksu.h"|#include "drivers/kernelsu/kernel/ksu.h"|g' drivers/input/input.c || true
+          find . -type f -name "*.c" -exec sed -i 's|#include "../drivers/kernelsu/|#include "drivers/kernelsu/|g' {} + || true
+          find . -type f -name "*.c" -exec sed -i 's|#include "../kernelsu/|#include "drivers/kernelsu/|g' {} + || true
+    
+          # 7. FIX SECCOMP STRUCTURE (5.4 KERNEL COMPATIBILITY)
           sed -i 's/current->seccomp\.mode/0/g' drivers/kernelsu/app_profile.c || true
           sed -i 's/current->seccomp\.filter/NULL/g' drivers/kernelsu/app_profile.c || true
-          sed -i 's/0 = 0;/\/\/ 0 = 0;/g' drivers/kernelsu/app_profile.c || true
-          sed -i 's/NULL = NULL;/\/\/ NULL = NULL;/g' drivers/kernelsu/app_profile.c || true
-          
+          sed -i '/^[[:space:]]*0[[:space:]]*=[[:space:]]*0;/d' drivers/kernelsu/app_profile.c || true
+          sed -i '/^[[:space:]]*NULL[[:space:]]*=[[:space:]]*NULL;/d' drivers/kernelsu/app_profile.c || true
+          sed -i 's/if (!!!current->seccomp/if (0 \/\/ seccomp disabled/g' drivers/kernelsu/app_profile.c || true
+    
           # 8. SAMSUNG DUMMY STUBS
           echo -e "\nvoid handle_decomp_fail(void) {}\nvoid md_dump_slabinfo(void) {}\n" >> init/main.c
-          
-          # 9. FIX SAMSUNG USB-C TYPO - PROPER PATH HANDLING
-          # Fix includes in P86801_tcpc driver files (relative path from nested dirs)
-          find drivers/usb/typec/P86801_tcpc -type f -name "*.c" \
-          -exec sed -i 's|#include "inc/tcpci\.h"|#include "../inc/tcpci.h"|g' {} + || true
-
-          find drivers/usb/typec/P86801_tcpc -type f -name "*.h" \
-          -exec sed -i 's|#include "inc/tcpci\.h"|#include "../inc/tcpci.h"|g' {} + || true
-
-          # Fix includes in nested aw35615 subdirectory (double parent path)
-          find drivers/usb/typec/P86801_tcpc/aw35615 -type f -name "*.c" \ 
-          -exec sed -i 's|#include "\.\.\/inc/tcpci\.h"|#include "../../inc/tcpci.h"|g' {} + || true
     
+          # 9. FIX SAMSUNG USB-C TYPO - PROPER PATH HANDLING
+           find drivers/usb/typec/P86801_tcpc -type f -name "*.c" \
+              -exec sed -i 's|#include "inc/tcpci\.h"|#include "../inc/tcpci.h"|g' {} + || true
+          find drivers/usb/typec/P86801_tcpc -type f -name "*.h" \
+              -exec sed -i 's|#include "inc/tcpci\.h"|#include "../inc/tcpci.h"|g' {} + || true
+                find drivers/usb/typec/P86801_tcpc/aw35615 -type f -name "*.c" \
+              -exec sed -i 's|#include "\.\.\/inc/tcpci\.h"|#include "../../inc/tcpci.h"|g' {} + || true    
+     
       - name: 🔑 Brute Force Export Symbols
         run: |
           nuclear_export() {
