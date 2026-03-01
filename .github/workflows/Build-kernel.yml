@@ -52,21 +52,18 @@ jobs:
           # 1. FIX VDSO OFFSETS 
           VDSO_H="arch/arm64/include/asm/vdso.h"
           if [ -f "$VDSO_H" ]; then
-              echo "Fixing VDSO declarations in $VDSO_H"
               sed -i '/extern unsigned long vdso_offset_/d' "$VDSO_H"
           fi
 
           # 2. FIX WALT TRACE PATH
           TRACE_HEADER="kernel/sched/walt/trace.h"
           if [ -f "$TRACE_HEADER" ]; then
-              echo "Fixing TRACE_INCLUDE_PATH in $TRACE_HEADER"
               sed -i '/#define TRACE_INCLUDE_PATH/c\#define TRACE_INCLUDE_PATH ../../kernel/sched/walt' "$TRACE_HEADER"
           fi
 
           # 3. Fix path_umount / do_umount in kernel_umount.c
           UM_FILE="drivers/kernelsu/kernel_umount.c"
           if [ -f "$UM_FILE" ]; then
-              echo "Fixing $UM_FILE for Kernel 5.4"
               sed -i 's/path_umount(path, flags)/do_umount(path->mnt, flags)/g' "$UM_FILE"
               sed -i '1i #include <linux/mount.h>\n#include <linux/fs.h>' "$UM_FILE"
           fi
@@ -80,20 +77,23 @@ jobs:
           sed -i 's|register unsigned long current_stack_pointer asm ("sp");|#define current_stack_pointer ({ unsigned long sp; asm("mov %0, sp" : "=r"(sp)); sp; })|g' arch/arm64/include/asm/stack_pointer.h || true
           sed -i 's|"brk %0" : : "I"|"brk %0" : : "n"|g' arch/arm64/include/asm/kgdb.h || true   
           
-          # 6. RESTORED: THE GLOBAL KSU PATH SHIFT
-          # We must pre-patch these so KSU doesn't inject broken paths dynamically
+          # 6. THE GLOBAL KSU PATH SHIFT
           sed -i 's|<kernelsu/ksu.h>|"../kernelsu/ksu.h"|g' drivers/input/input.c || true
           sed -i 's|<kernelsu/kernel/ksu.h>|"../kernelsu/ksu.h"|g' drivers/input/input.c || true
           find drivers/input fs kernel -type f -name "*.c" -exec sed -i 's|kernelsu/kernel/ksu.h|kernelsu/ksu.h|g' {} + || true
           
-          # 7. RESTORED: ROBUST SECCOMP STRIP
+          # 7. ROBUST SECCOMP STRIP
           sed -i 's/current->seccomp\.mode/0/g' drivers/kernelsu/app_profile.c || true
           sed -i 's/current->seccomp\.filter/NULL/g' drivers/kernelsu/app_profile.c || true
           sed -i 's/0 = 0;/\/\/ 0 = 0;/g' drivers/kernelsu/app_profile.c || true
           sed -i 's/NULL = NULL;/\/\/ NULL = NULL;/g' drivers/kernelsu/app_profile.c || true
           
-          # 8. RESTORED: SAMSUNG DUMMY STUBS
+          # 8. SAMSUNG DUMMY STUBS
           echo -e "\nvoid handle_decomp_fail(void) {}\nvoid md_dump_slabinfo(void) {}\n" >> init/main.c
+          
+          # 9. FIX SAMSUNG USB-C TYPO (CARPET BOMB)
+          find drivers/usb/typec -type f -exec sed -i 's|"inc/tcpci.h"|"tcpci.h"|g' {} + || true
+          find drivers/usb/typec -type f -exec sed -i 's|<inc/tcpci.h>|<tcpci.h>|g' {} + || true
     
       - name: 🔑 Brute Force Export Symbols
         run: |
@@ -267,4 +267,3 @@ jobs:
         with:
           name: TabA9Plus-Kernel
           path: TabA9Plus-KSU-Kernel.zip
-
