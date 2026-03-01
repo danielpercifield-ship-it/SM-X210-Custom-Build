@@ -12,6 +12,7 @@ jobs:
           export DEBIAN_FRONTEND=noninteractive
           sudo apt-get update
           sudo apt-get install -y git bc build-essential flex bison libssl-dev libelf-dev clang llvm lld gcc-aarch64-linux-gnu tar zip wget python3 cpio xz-utils ccache curl dos2unix
+          
       - name: 📥 Checkout Kernel Source
         uses: actions/checkout@v4
 
@@ -62,7 +63,8 @@ jobs:
           sed -i 's|<kernelsu/ksu.h>|"../kernelsu/ksu.h"|g' drivers/input/input.c || true
           sed -i 's|<kernelsu/kernel/ksu.h>|"../kernelsu/ksu.h"|g' drivers/input/input.c || true
           find drivers/input fs kernel -type f -name "*.c" -exec sed -i 's|kernelsu/kernel/ksu.h|kernelsu/ksu.h|g' {} + || true
-                    # ROBUST SECCOMP STRIP
+          
+          # ROBUST SECCOMP STRIP
           sed -i 's/current->seccomp\.mode/0/g' drivers/kernelsu/app_profile.c || true
           sed -i 's/current->seccomp\.filter/NULL/g' drivers/kernelsu/app_profile.c || true
           sed -i 's/0 = 0;/\/\/ 0 = 0;/g' drivers/kernelsu/app_profile.c || true
@@ -74,8 +76,10 @@ jobs:
           
           # Fix USB-C header path
           find drivers/usb/typec -name "pd_dpm_pdo_select.h" -exec sed -i 's|"inc/tcpci.h"|"tcpci.h"|g' {} + || true
+          
           # Force version defines directly into supercalls.c
           sed -i '1i #define KSU_VERSION 11938\n#define KSU_VERSION_TAG "v1.0.0"\n#define KERNEL_SU_VERSION 11938\n#define KERNEL_SU_VERSION_TAG "v1.0.0"' drivers/kernelsu/supercalls.c || true
+          
           # Eradicate double linking
           sed -i '/tiny_sulog\.o/d' drivers/kernelsu/Makefile || true
           
@@ -172,6 +176,11 @@ jobs:
           # Disable Samsung specific security that blocks KSU
           ./scripts/config --file .config --disable SECURITY_DEFEX
           ./scripts/config --file .config --disable SEC_RESTRICT_FORK
+          
+          # USER FIX: Disable LTO to prevent the linker from deleting the exported SELinux symbols
+          ./scripts/config --file .config --disable LTO
+          ./scripts/config --file .config --disable LTO_CLANG
+          ./scripts/config --file .config --disable THINLTO
           
           make ARCH=arm64 HOSTCC=gcc CC="clang --target=aarch64-linux-gnu" CROSS_COMPILE=aarch64-linux-gnu- olddefconfig
    
