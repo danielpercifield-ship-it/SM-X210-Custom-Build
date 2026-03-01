@@ -70,7 +70,7 @@ jobs:
           sed -i 's|register unsigned long current_stack_pointer asm ("sp");|#define current_stack_pointer ({ unsigned long sp; asm("mov %0, sp" : "=r"(sp)); sp; })|g' arch/arm64/include/asm/stack_pointer.h || true
           sed -i 's|"brk %0" : : "I"|"brk %0" : : "n"|g' arch/arm64/include/asm/kgdb.h || true   
           
-          # 5. THE SYMLINK CHEAT CODE (Bypasses all KSU include errors)
+          # 5. THE SYMLINK CHEAT CODE
           mkdir -p drivers/kernelsu/kernel
           ln -s ../ksu.h drivers/kernelsu/kernel/ksu.h || true
           
@@ -87,35 +87,18 @@ jobs:
           sed -i 's|"../inc/tcpci.h"|"inc/tcpci.h"|g' drivers/usb/typec/P86801_tcpc/tcpc_rt1711h.c || true
           sed -i 's|"../../inc/tcpci.h"|"../inc/tcpci.h"|g' drivers/usb/typec/P86801_tcpc/aw35615/aw35615_driver.c || true
           sed -i 's|"../inc/tcpci.h"|"inc/tcpci.h"|g' drivers/usb/typec/P86801_tcpc/tcpci_core.c || true
-          
-      - name: 🔑 Make SELinux Symbols Global (Targeted Fix)
-        run: |
-          echo "Un-stating SELinux functions securely..."
-          
-          # Delete 'static' only on the specific lines where the functions are defined
-          sed -i '/selinux_state/s/static[[:space:]]*//g' security/selinux/hooks.c
-          sed -i '/selinux_blob_sizes/s/static[[:space:]]*//g' security/selinux/hooks.c
-          sed -i '/hashtab_search(/s/static[[:space:]]*//g' security/selinux/ss/hashtab.c
-          sed -i '/hashtab_insert(/s/static[[:space:]]*//g' security/selinux/ss/hashtab.c
-          sed -i '/ebitmap_set_bit(/s/static[[:space:]]*//g' security/selinux/ss/ebitmap.c
-          sed -i '/ebitmap_get_bit(/s/static[[:space:]]*//g' security/selinux/ss/ebitmap.c
-          sed -i '/ebitmap_get_bit(/s/inline[[:space:]]*//g' security/selinux/ss/ebitmap.c
-          sed -i '/avtab_search_node(/s/static[[:space:]]*//g' security/selinux/ss/avtab.c
-          sed -i '/avtab_search_node_next(/s/static[[:space:]]*//g' security/selinux/ss/avtab.c
-          sed -i '/avtab_insert_nonunique(/s/static[[:space:]]*//g' security/selinux/ss/avtab.c
-          sed -i '/avc_ss_reset(/s/static[[:space:]]*//g' security/selinux/avc.c
-          sed -i '/selnl_notify_policyload(/s/static[[:space:]]*//g' security/selinux/netlink.c
-          sed -i '/selinux_status_update_policyload(/s/static[[:space:]]*//g' security/selinux/ss/services.c || true
-          sed -i '/selinux_status_update_policyload(/s/static[[:space:]]*//g' security/selinux/status.c || true
 
-          # Clean existing exports to prevent duplicate definition errors
+      - name: 🔑 Force Linker to Keep SELinux Symbols (Perl Nuke)
+        run: |
+          # 1. Strip 'static' from symbols regardless of return types or whitespace
+          # This handles struct ptrs, void, int, etc.
           SYMS="selinux_state selinux_blob_sizes hashtab_search hashtab_insert ebitmap_set_bit ebitmap_get_bit avtab_search_node avtab_search_node_next avtab_insert_nonunique avc_ss_reset selnl_notify_policyload selinux_status_update_policyload"
           for sym in $SYMS; do
+              find security/selinux -name "*.c" -exec perl -pi -e "s/static\s+(.*?$sym)/\$1/g" {} +
               find security/selinux -name "*.c" -exec sed -i "/EXPORT_SYMBOL.*($sym)/d" {} + || true
           done
-          sed -i "/EXPORT_SYMBOL.*(path_umount)/d" fs/namespace.c || true
 
-          # Inject EXPORT_SYMBOL_GPL at the end of files
+          # 2. Re-inject Exports with correct header
           echo -e "\n#include <linux/export.h>\nEXPORT_SYMBOL_GPL(selinux_state);" >> security/selinux/hooks.c
           echo "EXPORT_SYMBOL_GPL(selinux_blob_sizes);" >> security/selinux/hooks.c
           echo -e "\n#include <linux/export.h>\nEXPORT_SYMBOL_GPL(hashtab_search);" >> security/selinux/ss/hashtab.c
@@ -134,24 +117,9 @@ jobs:
               echo -e "\n#include <linux/export.h>\nEXPORT_SYMBOL_GPL(selinux_status_update_policyload);" >> security/selinux/ss/services.c
           fi
           
-          # Export path_umount from namespace.c where KSU injects it
-          echo -e "\n#include <linux/export.h>\nEXPORT_SYMBOL_GPL(path_umount);" >> fs/namespace.c
-          
-          # Expose core states to KSU via the main security header
-          echo -e "\nextern struct selinux_state selinux_state;\nextern struct lsm_blob_sizes selinux_blob_sizes;" >> security/selinux/include/security.h
-
-      - name: 🕵️ Debugging Symbol Export (Diagnostics)
-        run: |
-          echo "=== CHECKING HOOKS.C ==="
-          cat security/selinux/hooks.c | grep "EXPORT_SYMBOL_GPL(selinux_state)" || echo "❌ Missing selinux_state EXPORT!"
-          cat security/selinux/hooks.c | grep "struct selinux_state selinux_state" | grep -v "static" || echo "❌ Missing un-static selinux_state!"
-          
-          echo "=== CHECKING HASHTAB.C ==="
-          cat security/selinux/ss/hashtab.c | grep "EXPORT_SYMBOL_GPL(hashtab_search)" || echo "❌ Missing hashtab_search EXPORT!"
-          cat security/selinux/ss/hashtab.c | grep "hashtab_search(" | grep -v "static" || echo "❌ Missing un-static hashtab_search!"
-          
-          echo "=== CHECKING NAMESPACE.C ==="
-          cat fs/namespace.c | grep "EXPORT_SYMBOL_GPL(path_umount)" || echo "❌ Missing path_umount EXPORT!"
+          # 3. Global Header Visibility
+          echo "extern struct selinux_state selinux_state;" >> security/selinux/include/security.h
+          echo "extern struct lsm_blob_sizes selinux_blob_sizes;" >> security/selinux/include/security.h
           
       - name: ⚙️ Generate Kernel Configuration
         run: |
@@ -170,23 +138,9 @@ jobs:
           ./scripts/config --file .config --enable KSU
           ./scripts/config --file .config --enable KSU_NEXT
           ./scripts/config --file .config --enable KSU_NEXT_MANUAL_HOOK
-          
-          # Force Enable SELinux in Config
-          ./scripts/config --file .config --enable SECURITY_SELINUX
-          ./scripts/config --file .config --enable SECURITY_SELINUX_BOOTPARAM
-          ./scripts/config --file .config --disable SECURITY_SELINUX_DISABLE
-          ./scripts/config --file .config --disable SECURITY_SELINUX_DEVELOP
-          
-          # Disable Samsung specific security that blocks KSU
-          ./scripts/config --file .config --disable SECURITY_DEFEX
-          ./scripts/config --file .config --disable SEC_RESTRICT_FORK
-          
-          # Disable optimizations
           ./scripts/config --file .config --disable TRIM_UNUSED_KSYMS
-          ./scripts/config --file .config --disable UNUSED_SYMBOLS
           ./scripts/config --file .config --disable LTO
           ./scripts/config --file .config --disable LTO_CLANG
-          ./scripts/config --file .config --disable THINLTO
           
           make ARCH=arm64 HOSTCC=gcc CC="clang --target=aarch64-linux-gnu" CROSS_COMPILE=aarch64-linux-gnu- olddefconfig
    
@@ -204,9 +158,6 @@ jobs:
           #define SECINITSID_SECURITY 2
           #define SECINITSID_UNLABELED 3
           #define SECINITSID_NUM 27
-          #ifndef CONFIG_SECURITY_SELINUX_SIDTAB_HASH_BITS
-          #define CONFIG_SECURITY_SELINUX_SIDTAB_HASH_BITS 9
-          #endif
           #endif
           EOF
           cat <<EOF > security/selinux/include/av_permissions.h
@@ -223,7 +174,7 @@ jobs:
           cp security/selinux/include/flask.h drivers/kernelsu/flask.h
           cp security/selinux/include/av_permissions.h drivers/kernelsu/av_permissions.h
       
-      - name: 🔨 Compile Kernel (DOUBLE MAKE WITH FORCED CACHE CLEAR)
+      - name: 🔨 Compile Kernel (DOUBLE MAKE WITH FORCED REBUILD)
         run: |
           export CCACHE_DIR=$GITHUB_WORKSPACE/.ccache
           ccache -M 5G
@@ -241,11 +192,12 @@ jobs:
           -j$(nproc --all) \
           KCFLAGS="-Wno-error=implicit-function-declaration -Wno-error=implicit-int -Wno-error=int-conversion -Wno-error=unused-but-set-variable -Wno-error=strict-prototypes -Wno-error=incompatible-pointer-types -Wno-error=format-invalid-specifier -I$(pwd)/security/selinux/include -I$(pwd)/drivers" \
           Image || {
-              echo "✅ First pass completed. KSU patched the tree."
+              echo "✅ Pass 1 finished. KSU patched the tree."
               
-              # THE CRITICAL FIX: We must delete the compiled filesystem objects so Make doesn't skip them in Pass 2!
-              echo "🧹 Deleting stale filesystem objects to force recompilation of injected KSU hooks..."
+              # CRITICAL: We delete the object files so Make is forced to rebuild them!
+              echo "🧹 Clearing stale objects to force hook integration..."
               find fs -name "*.o" -type f -delete
+              find security/selinux -name "*.o" -type f -delete
               
               echo "🚀 Starting Pass 2..."
               make ARCH=arm64 \
