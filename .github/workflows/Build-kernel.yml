@@ -91,9 +91,17 @@ jobs:
           # 8. SAMSUNG DUMMY STUBS
           echo -e "\nvoid handle_decomp_fail(void) {}\nvoid md_dump_slabinfo(void) {}\n" >> init/main.c
           
-          # 9. FIX SAMSUNG USB-C TYPO (CARPET BOMB)
-          find drivers/usb/typec -type f -exec sed -i 's|"inc/tcpci.h"|"tcpci.h"|g' {} + || true
-          find drivers/usb/typec -type f -exec sed -i 's|<inc/tcpci.h>|<tcpci.h>|g' {} + || true
+          # 9. FIX SAMSUNG USB-C TYPO - PROPER PATH HANDLING
+          # Fix includes in P86801_tcpc driver files (relative path from nested dirs)
+          find drivers/usb/typec/P86801_tcpc -type f -name "*.c" \
+          -exec sed -i 's|#include "inc/tcpci\.h"|#include "../inc/tcpci.h"|g' {} + || true
+
+          find drivers/usb/typec/P86801_tcpc -type f -name "*.h" \
+          -exec sed -i 's|#include "inc/tcpci\.h"|#include "../inc/tcpci.h"|g' {} + || true
+
+          # Fix includes in nested aw35615 subdirectory (double parent path)
+          find drivers/usb/typec/P86801_tcpc/aw35615 -type f -name "*.c" \ 
+          -exec sed -i 's|#include "\.\.\/inc/tcpci\.h"|#include "../../inc/tcpci.h"|g' {} + || true
     
       - name: 🔑 Brute Force Export Symbols
         run: |
