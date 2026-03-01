@@ -49,41 +49,42 @@ jobs:
      
       - name: 🩹 Apply Deep Source Code Fixes
         run: |
-          # 1. Fix do_umount in kernel_umount.c
-          # do_umount is an internal VFS function. We will export it in the next step.
+          # 1. FIX WALT TRACE PATH (Solves the 'trace.h not found' error)
+          # We force the TRACE_INCLUDE_PATH to be relative to the kernel root
+          TRACE_HEADER="kernel/sched/walt/trace.h"
+          if [ -f "$TRACE_HEADER" ]; then
+              echo "Fixing TRACE_INCLUDE_PATH in $TRACE_HEADER"
+              sed -i '/#define TRACE_INCLUDE_PATH/c\#define TRACE_INCLUDE_PATH ../../kernel/sched/walt' "$TRACE_HEADER"
+          fi
+
+          # 2. Fix path_umount / do_umount in kernel_umount.c
           UM_FILE="drivers/kernelsu/kernel_umount.c"
           if [ -f "$UM_FILE" ]; then
+              echo "Fixing $UM_FILE for Kernel 5.4"
               sed -i 's/path_umount(path, flags)/do_umount(path->mnt, flags)/g' "$UM_FILE"
-              # Ensure correct headers
               sed -i '1i #include <linux/mount.h>\n#include <linux/fs.h>' "$UM_FILE"
           fi
 
-          # 2. Fix KernelSU-Next SELinux API for Kernel 5.4
-          # In 5.4, these functions require the &selinux_state pointer
+          # 3. Fix KernelSU SELinux logic for 5.4 (Pointer passing)
           find drivers/kernelsu/selinux/ -type f -name "*.c" -exec sed -i 's|selinux_status_update_policyload(0);|selinux_status_update_policyload(\&selinux_state, 0);|g' {} + || true
           find drivers/kernelsu/selinux/ -type f -name "*.c" -exec sed -i 's|selinux_status_update_policyload(1);|selinux_status_update_policyload(\&selinux_state, 1);|g' {} + || true
-          sed -i 's|db = \&policydb;|db = \&selinux_state.ss->policydb;|g' drivers/kernelsu/selinux/rules.c || true
-
-          # 3. Fix objsec.h / selinux_blob_sizes visibility
-          # This header needs to know the variable is global
-          sed -i 's/extern struct lsm_blob_sizes selinux_blob_sizes;/struct lsm_blob_sizes selinux_blob_sizes;/g' security/selinux/include/objsec.h || true   
-      
-      - name: 🔑 Brute Force Export SELinux Symbols
+          sed -i 's|db = \&policydb;|db = \&selinux_state.ss->policydb;|g' drivers/kernelsu/selinux/rules.c || true      
+ 
+      - name: 🔑 Brute Force Export Symbols
         run: |
-          # Function to strip 'static' and add EXPORT_SYMBOL
           nuclear_export() {
               local sym=$1
-              # Search for the definition in common SELinux and FS paths
+              # Find the file containing the definition (searching SELinux and Filesystem core)
               local file=$(grep -lE "^static.* $sym|^struct.* $sym|^int.* $sym|^void.* $sym" security/selinux/*.c security/selinux/ss/*.c fs/*.c 2>/dev/null | head -n 1)
               
               if [ -n "$file" ]; then
                   echo "Found $sym in $file. Stripping static and exporting..."
-                  # Strip 'static' and 'inline' from the definition line
+                  # Strip 'static' and 'inline' from the start of the line
                   sed -i "s/^static //g" "$file"
                   sed -i "s/^static inline //g" "$file"
-                  # Strip 'static' if it has a space before it
-                  sed -i "s/ static / /g" "$file"
-                  # Ensure export exists
+                  # Strip 'static' if it has leading whitespace
+                  sed -i "s/^[[:space:]]*static //g" "$file"
+                  # Delete existing export and add fresh one at bottom
                   sed -i "/EXPORT_SYMBOL.*($sym)/d" "$file"
                   echo "EXPORT_SYMBOL_GPL($sym);" >> "$file"
               else
@@ -91,7 +92,7 @@ jobs:
               fi
           }
 
-          # Export everything the linker is crying about
+          # SELinux symbols KSU needs
           nuclear_export "selinux_state"
           nuclear_export "selinux_blob_sizes"
           nuclear_export "hashtab_search"
@@ -105,9 +106,9 @@ jobs:
           nuclear_export "selnl_notify_policyload"
           nuclear_export "selinux_status_update_policyload"
           
-          # Fix the 'do_umount' symbol which is in fs/namespace.c
+          # VFS symbols KSU needs
           nuclear_export "do_umount"
-      
+          
       - name: ⚙️ Generate Kernel Configuration
         run: |
           export ARCH=arm64
@@ -118,7 +119,7 @@ jobs:
           
           DEFCONFIG_FILE=$(find . -name "gta9pwifi_eur_open_defconfig" | head -n 1)
           cp "$DEFCONFIG_FILE" arch/arm64/configs/gta9pwifi_eur_open_defconfig
-          
+
           make ARCH=arm64 HOSTCC=gcc CC="clang --target=aarch64-linux-gnu" CROSS_COMPILE=aarch64-linux-gnu- gta9pwifi_eur_open_defconfig
           
           # Enable KSU Configs
