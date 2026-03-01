@@ -77,11 +77,11 @@ jobs:
           sed -i 's|register unsigned long current_stack_pointer asm ("sp");|#define current_stack_pointer ({ unsigned long sp; asm("mov %0, sp" : "=r"(sp)); sp; })|g' arch/arm64/include/asm/stack_pointer.h || true
           sed -i 's|"brk %0" : : "I"|"brk %0" : : "n"|g' arch/arm64/include/asm/kgdb.h || true   
           
-          # 6. THE SYMLINK CHEAT CODE (Bypasses all KSU include errors)
+          # 6. THE SYMLINK CHEAT CODE
           mkdir -p drivers/kernelsu/kernel
           ln -s ../ksu.h drivers/kernelsu/kernel/ksu.h || true
           
-          # 7. ROBUST SECCOMP STRIP (SAFELY DELETES ASSIGNMENTS)
+          # 7. ROBUST SECCOMP STRIP
           sed -i '/current->seccomp\.mode =/d' drivers/kernelsu/app_profile.c || true
           sed -i '/current->seccomp\.filter =/d' drivers/kernelsu/app_profile.c || true
           sed -i 's/!!!current->seccomp\.mode/0/g' drivers/kernelsu/app_profile.c || true
@@ -89,58 +89,70 @@ jobs:
           # 8. SAMSUNG DUMMY STUBS
           echo -e "\nvoid handle_decomp_fail(void) {}\nvoid md_dump_slabinfo(void) {}\n" >> init/main.c
           
-          # 9. FIX SAMSUNG USB-C TYPOS (Clang's Exact Suggestions)
+          # 9. FIX SAMSUNG USB-C TYPOS
           sed -i 's|"inc/tcpci.h"|"tcpci.h"|g' drivers/usb/typec/P86801_tcpc/inc/pd_dpm_pdo_select.h || true
           sed -i 's|"../inc/tcpci.h"|"inc/tcpci.h"|g' drivers/usb/typec/P86801_tcpc/tcpc_rt1711h.c || true
           sed -i 's|"../../inc/tcpci.h"|"../inc/tcpci.h"|g' drivers/usb/typec/P86801_tcpc/aw35615/aw35615_driver.c || true
           sed -i 's|"../inc/tcpci.h"|"inc/tcpci.h"|g' drivers/usb/typec/P86801_tcpc/tcpci_core.c || true
     
-      - name: 🔑 Force Linker to Keep SELinux Symbols
+      - name: 🔑 Force Linker to Keep SELinux Symbols (Tab-Proof)
         run: |
-          # 1. Strip static from the source files so they are globally visible
-          strip_static() {
-              local sym=$1
-              local file=$(grep -lE "^static.* $sym|^struct.* $sym|^int.* $sym|^void.* $sym" security/selinux/*.c security/selinux/ss/*.c 2>/dev/null | head -n 1)
-              if [ -n "$file" ]; then
-                  sed -i "s/^static //g" "$file"
-                  sed -i "s/^static inline //g" "$file"
-              fi
-          }
+          # 1. Use Perl to perfectly strip 'static' regardless of tabs, spaces, or inline modifiers
+          find security/selinux -name "*.c" -exec perl -pi -e 's/static\s+(inline\s+)?struct\s+selinux_state/$1struct selinux_state/g' {} +
+          find security/selinux -name "*.c" -exec perl -pi -e 's/static\s+(inline\s+)?struct\s+lsm_blob_sizes/$1struct lsm_blob_sizes/g' {} +
+          find security/selinux -name "*.c" -exec perl -pi -e 's/static\s+(inline\s+)?int\s+hashtab/$1int hashtab/g' {} +
+          find security/selinux -name "*.c" -exec perl -pi -e 's/static\s+(inline\s+)?int\s+ebitmap/$1int ebitmap/g' {} +
+          find security/selinux -name "*.c" -exec perl -pi -e 's/static\s+(inline\s+)?struct\s+avtab_node/$1struct avtab_node/g' {} +
+          find security/selinux -name "*.c" -exec perl -pi -e 's/static\s+(inline\s+)?void\s+avc_ss_reset/$1void avc_ss_reset/g' {} +
+          find security/selinux -name "*.c" -exec perl -pi -e 's/static\s+(inline\s+)?void\s+selnl_notify/$1void selnl_notify/g' {} +
+          find security/selinux -name "*.c" -exec perl -pi -e 's/static\s+(inline\s+)?void\s+selinux_status/$1void selinux_status/g' {} +
           
-          strip_static "selinux_state"
-          strip_static "selinux_blob_sizes"
-          strip_static "hashtab_search"
-          strip_static "hashtab_insert"
-          strip_static "ebitmap_set_bit"
-          strip_static "ebitmap_get_bit"
-          strip_static "avtab_search_node"
-          strip_static "avtab_search_node_next"
-          strip_static "avtab_insert_nonunique"
-          strip_static "avc_ss_reset"
-          strip_static "selnl_notify_policyload"
-          strip_static "selinux_status_update_policyload"
+          # Un-static do_umount
+          perl -pi -e 's/static\s+(inline\s+)?int\s+do_umount/$1int do_umount/g' fs/namespace.c
           
-          # 2. INJECT LINKER KEEPS
-          # We append these commands directly to the core ARM64 linker script
+          # 2. Clean existing exports to prevent duplicate definition errors
+          for sym in selinux_state selinux_blob_sizes hashtab_search hashtab_insert ebitmap_set_bit ebitmap_get_bit avtab_search_node avtab_search_node_next avtab_insert_nonunique avc_ss_reset selnl_notify_policyload selinux_status_update_policyload do_umount; do
+              find security/selinux fs/namespace.c -name "*.c" -exec sed -i "/EXPORT_SYMBOL.*($sym)/d" {} + || true
+          done
+
+          # 3. Manually inject EXPORT_SYMBOL_GPL at the bottom of the source files
+          echo "EXPORT_SYMBOL_GPL(selinux_state);" >> security/selinux/hooks.c
+          echo "EXPORT_SYMBOL_GPL(selinux_blob_sizes);" >> security/selinux/hooks.c
+          echo "EXPORT_SYMBOL_GPL(hashtab_search);" >> security/selinux/ss/hashtab.c
+          echo "EXPORT_SYMBOL_GPL(hashtab_insert);" >> security/selinux/ss/hashtab.c
+          echo "EXPORT_SYMBOL_GPL(ebitmap_set_bit);" >> security/selinux/ss/ebitmap.c
+          echo "EXPORT_SYMBOL_GPL(ebitmap_get_bit);" >> security/selinux/ss/ebitmap.c
+          echo "EXPORT_SYMBOL_GPL(avtab_search_node);" >> security/selinux/ss/avtab.c
+          echo "EXPORT_SYMBOL_GPL(avtab_search_node_next);" >> security/selinux/ss/avtab.c
+          echo "EXPORT_SYMBOL_GPL(avtab_insert_nonunique);" >> security/selinux/ss/avtab.c
+          echo "EXPORT_SYMBOL_GPL(avc_ss_reset);" >> security/selinux/avc.c
+          echo "EXPORT_SYMBOL_GPL(selnl_notify_policyload);" >> security/selinux/netlink.c
+          echo "EXPORT_SYMBOL_GPL(do_umount);" >> fs/namespace.c
+          
+          if [ -f security/selinux/status.c ]; then
+              echo "EXPORT_SYMBOL_GPL(selinux_status_update_policyload);" >> security/selinux/status.c
+          else
+              echo "EXPORT_SYMBOL_GPL(selinux_status_update_policyload);" >> security/selinux/ss/services.c
+          fi
+          
+          # 4. Inject EXTERN commands at the VERY TOP of the Linker Script
           LDS="arch/arm64/kernel/vmlinux.lds.S"
           if [ -f "$LDS" ]; then
-              echo "Injecting EXTERN rules into $LDS"
-              cat <<EOF >> "$LDS"
-          EXTERN(selinux_state)
-          EXTERN(selinux_blob_sizes)
-          EXTERN(hashtab_search)
-          EXTERN(hashtab_insert)
-          EXTERN(ebitmap_set_bit)
-          EXTERN(ebitmap_get_bit)
-          EXTERN(avtab_search_node)
-          EXTERN(avtab_search_node_next)
-          EXTERN(avtab_insert_nonunique)
-          EXTERN(avc_ss_reset)
-          EXTERN(selnl_notify_policyload)
-          EXTERN(selinux_status_update_policyload)
-          EOF
+              sed -i '1i EXTERN(selinux_state)' "$LDS"
+              sed -i '1i EXTERN(selinux_blob_sizes)' "$LDS"
+              sed -i '1i EXTERN(hashtab_search)' "$LDS"
+              sed -i '1i EXTERN(hashtab_insert)' "$LDS"
+              sed -i '1i EXTERN(ebitmap_set_bit)' "$LDS"
+              sed -i '1i EXTERN(ebitmap_get_bit)' "$LDS"
+              sed -i '1i EXTERN(avtab_search_node)' "$LDS"
+              sed -i '1i EXTERN(avtab_search_node_next)' "$LDS"
+              sed -i '1i EXTERN(avtab_insert_nonunique)' "$LDS"
+              sed -i '1i EXTERN(avc_ss_reset)' "$LDS"
+              sed -i '1i EXTERN(selnl_notify_policyload)' "$LDS"
+              sed -i '1i EXTERN(selinux_status_update_policyload)' "$LDS"
+              sed -i '1i EXTERN(do_umount)' "$LDS"
           fi
-
+          
           # Fix the header visibility
           echo "extern struct selinux_state selinux_state;" >> security/selinux/include/security.h
           echo "extern struct lsm_blob_sizes selinux_blob_sizes;" >> security/selinux/include/security.h
