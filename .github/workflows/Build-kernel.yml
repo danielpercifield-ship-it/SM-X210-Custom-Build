@@ -82,6 +82,12 @@ jobs:
           sed -i 's|#include "../kernelsu/kernel/ksu.h"|#include "drivers/kernelsu/kernel/ksu.h"|g' drivers/input/input.c || true
           find . -type f -name "*.c" -exec sed -i 's|#include "../drivers/kernelsu/|#include "drivers/kernelsu/|g' {} + || true
           find . -type f -name "*.c" -exec sed -i 's|#include "../kernelsu/|#include "drivers/kernelsu/|g' {} + || true
+
+          # Fix the remaining KSU include paths (fs/open.c and input.c)
+          # These weren't caught by the global replaces due to quote differences
+          sed -i 's|#include "drivers/kernelsu/kernel/ksu.h"|#include "drivers/kernelsu/ksu.h"|g' fs/open.c || true
+          sed -i 's|#include <kernelsu/kernel/ksu.h>|#include "drivers/kernelsu/ksu.h"|g' drivers/input/input.c || true
+          sed -i 's|#include <kernelsu/ksu.h>|#include "drivers/kernelsu/ksu.h"|g' drivers/input/input.c || true
     
           # 7. FIX SECCOMP STRUCTURE (5.4 KERNEL COMPATIBILITY)
           sed -i 's/current->seccomp\.mode/0/g' drivers/kernelsu/app_profile.c || true
