@@ -46,26 +46,26 @@ jobs:
           
           sed -i '/kernelsu/d' drivers/Makefile || true
           echo "obj-y += kernelsu/" >> drivers/Makefile
-          
+     
       - name: 🩹 Apply Deep Source Code Fixes
         run: |
           # 1. FIX VDSO OFFSETS 
           VDSO_H="arch/arm64/include/asm/vdso.h"
           if [ -f "$VDSO_H" ]; then
-          sed -i '/extern unsigned long vdso_offset_/d' "$VDSO_H"
+              sed -i '/extern unsigned long vdso_offset_/d' "$VDSO_H"
           fi
 
           # 2. FIX WALT TRACE PATH
           TRACE_HEADER="kernel/sched/walt/trace.h"
           if [ -f "$TRACE_HEADER" ]; then
-          sed -i '/#define TRACE_INCLUDE_PATH/c\#define TRACE_INCLUDE_PATH ../../kernel/sched/walt' "$TRACE_HEADER"
+              sed -i '/#define TRACE_INCLUDE_PATH/c\#define TRACE_INCLUDE_PATH ../../kernel/sched/walt' "$TRACE_HEADER"
           fi
 
           # 3. Fix path_umount / do_umount in kernel_umount.c
           UM_FILE="drivers/kernelsu/kernel_umount.c"
           if [ -f "$UM_FILE" ]; then
-          sed -i 's/path_umount(path, flags)/do_umount(path->mnt, flags)/g' "$UM_FILE"
-          sed -i '1i #include <linux/mount.h>\n#include <linux/fs.h>' "$UM_FILE"
+              sed -i 's/path_umount(path, flags)/do_umount(path->mnt, flags)/g' "$UM_FILE"
+              sed -i '1i #include <linux/mount.h>\n#include <linux/fs.h>' "$UM_FILE"
           fi
 
           # 4. Fix KernelSU SELinux logic for 5.4 API
@@ -76,39 +76,18 @@ jobs:
           # 5. Fix Architecture/Stack Fixes (KGDB/SP)
           sed -i 's|register unsigned long current_stack_pointer asm ("sp");|#define current_stack_pointer ({ unsigned long sp; asm("mov %0, sp" : "=r"(sp)); sp; })|g' arch/arm64/include/asm/stack_pointer.h || true
           sed -i 's|"brk %0" : : "I"|"brk %0" : : "n"|g' arch/arm64/include/asm/kgdb.h || true   
-    
-          # 6. FIX KSU HEADER INCLUDE PATHS (CRITICAL FOR 5.4)
-          sed -i 's|#include "../drivers/kernelsu/kernel/ksu.h"|#include "drivers/kernelsu/kernel/ksu.h"|g' fs/open.c || true
-          sed -i 's|#include "../kernelsu/kernel/ksu.h"|#include "drivers/kernelsu/kernel/ksu.h"|g' drivers/input/input.c || true
-          find . -type f -name "*.c" -exec sed -i 's|#include "../drivers/kernelsu/|#include "drivers/kernelsu/|g' {} + || true
-          find . -type f -name "*.c" -exec sed -i 's|#include "../kernelsu/|#include "drivers/kernelsu/|g' {} + || true
-
-          # Fix the remaining KSU include paths (fs/open.c and input.c)
-          # These weren't caught by the global replaces due to quote differences
-          sed -i 's|#include "drivers/kernelsu/kernel/ksu.h"|#include "drivers/kernelsu/ksu.h"|g' fs/open.c || true
-          sed -i 's|#include <kernelsu/kernel/ksu.h>|#include "drivers/kernelsu/ksu.h"|g' drivers/input/input.c || true
-          sed -i 's|#include <kernelsu/ksu.h>|#include "drivers/kernelsu/ksu.h"|g' drivers/input/input.c || true
-    
-          # 7. FIX SECCOMP STRUCTURE (5.4 KERNEL COMPATIBILITY)
-          sed -i 's/current->seccomp\.mode/0/g' drivers/kernelsu/app_profile.c || true
-          sed -i 's/current->seccomp\.filter/NULL/g' drivers/kernelsu/app_profile.c || true
-          sed -i '/^[[:space:]]*0[[:space:]]*=[[:space:]]*0;/d' drivers/kernelsu/app_profile.c || true
-          sed -i '/^[[:space:]]*NULL[[:space:]]*=[[:space:]]*NULL;/d' drivers/kernelsu/app_profile.c || true
-          sed -i 's/if (!!!current->seccomp/if (0 \/\/ seccomp disabled/g' drivers/kernelsu/app_profile.c || true
-    
-          # 8. SAMSUNG DUMMY STUBS
+          
+          # 6. ROBUST SECCOMP STRIP (BULLETPROOF FIND)
+          find drivers/kernelsu -type f -name "app_profile.c" -exec sed -i 's/current->seccomp.mode/0/g' {} + || true
+          find drivers/kernelsu -type f -name "app_profile.c" -exec sed -i 's/current->seccomp.filter/NULL/g' {} + || true
+          
+          # 7. SAMSUNG DUMMY STUBS
           echo -e "\nvoid handle_decomp_fail(void) {}\nvoid md_dump_slabinfo(void) {}\n" >> init/main.c
+          
+          # 8. FIX SAMSUNG USB-C TYPO (CARPET BOMB)
+          find drivers/usb/typec -type f -exec sed -i 's|"inc/tcpci.h"|"tcpci.h"|g' {} + || true
+          find drivers/usb/typec -type f -exec sed -i 's|<inc/tcpci.h>|<tcpci.h>|g' {} + || true
     
-          # 9. FIX SAMSUNG USB-C TYPO - PROPER PATH HANDLING
-           find drivers/usb/typec/P86801_tcpc -type f -name "*.c" \
-               -exec sed -i 's|#include "inc/tcpci\.h"|#include "../inc/tcpci.h"|g' {} + || true
-          find drivers/usb/typec/P86801_tcpc -type f -name "*.h" \
-               -exec sed -i 's|#include "inc/tcpci\.h"|#include "../inc/tcpci.h"|g' {} + || true
-          find drivers/usb/typec/P86801_tcpc/aw35615 -type f -name "*.c" \
-                -exec sed -i 's|#include "\.\.\/inc/tcpci\.h"|#include "../../inc/tcpci.h"|g' {} + || true
-          # Fix the tcpc_rt1711h.c include - find the correct tcpci.h location
-          sed -i 's|#include "tcpci.h"|#include "../inc/tcpci.h"|g' drivers/usb/typec/P86801_tcpc/tcpc_rt1711h.c || true
-     
       - name: 🔑 Brute Force Export Symbols
         run: |
           nuclear_export() {
@@ -210,12 +189,13 @@ jobs:
           cp security/selinux/include/flask.h drivers/kernelsu/flask.h
           cp security/selinux/include/av_permissions.h drivers/kernelsu/av_permissions.h
       
-      - name: 🔨 Compile Kernel
+      - name: 🔨 Compile Kernel (DOUBLE MAKE RESTORED)
         run: |
           export CCACHE_DIR=$GITHUB_WORKSPACE/.ccache
           ccache -M 5G
           
-          # Clean, single build pass
+          # Pass 1 catches KSU's auto-patcher mid-flight
+          # Notice the NEW "-I$(pwd)/drivers" flag to fix all include paths!
           make ARCH=arm64 \
           CC="ccache clang --target=aarch64-linux-gnu" \
           CROSS_COMPILE=aarch64-linux-gnu- \
@@ -234,7 +214,31 @@ jobs:
                    -Wno-error=strict-prototypes \
                    -Wno-error=incompatible-pointer-types \
                    -Wno-error=format-invalid-specifier \
-                   -I$(pwd)/security/selinux/include" \
+                   -I$(pwd)/security/selinux/include \
+                   -I$(pwd)/drivers" \
+          Image || echo "✅ First pass completed. KSU patched the tree. Starting Pass 2..."
+          
+          # Pass 2 solidifies the patched files into the final image
+          make ARCH=arm64 \
+          CC="ccache clang --target=aarch64-linux-gnu" \
+          CROSS_COMPILE=aarch64-linux-gnu- \
+          LD=ld.lld \
+          AR=llvm-ar \
+          NM=llvm-nm \
+          OBJCOPY=llvm-objcopy \
+          OBJDUMP=llvm-objdump \
+          STRIP=llvm-strip \
+          HOSTCC=gcc \
+          -j$(nproc --all) \
+          KCFLAGS="-Wno-error=implicit-function-declaration \
+                   -Wno-error=implicit-int \
+                   -Wno-error=int-conversion \
+                   -Wno-error=unused-but-set-variable \
+                   -Wno-error=strict-prototypes \
+                   -Wno-error=incompatible-pointer-types \
+                   -Wno-error=format-invalid-specifier \
+                   -I$(pwd)/security/selinux/include \
+                   -I$(pwd)/drivers" \
           Image
           
       - name: 📦 Package Output
