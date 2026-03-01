@@ -83,48 +83,69 @@ jobs:
           # Inject empty functions so the linker stops crying about missing Samsung debug logs
           echo -e "\nvoid handle_decomp_fail(void) {}\nvoid md_dump_slabinfo(void) {}\n" >> init/main.c
    
-      - name: 🔑 Smart Export SELinux Symbols
+      - name: 🔑 Brute Force Export SELinux Symbols
         run: |
-          # Define the symbols we need to export for KernelSU
-          SYMBOLS=(
-            "selinux_state"
-            "selinux_blob_sizes"
-            "hashtab_search"
-            "hashtab_insert"
-            "ebitmap_set_bit"
-            "ebitmap_get_bit"
-            "avtab_search_node"
-            "avtab_search_node_next"
-            "avtab_insert_nonunique"
-            "avc_ss_reset"
-            "selnl_notify_policyload"
-            "selinux_status_update_policyload"
-          )
+          # 1. Define target files based on SM-X210 / Kernel 5.4 structure
+          HOOKS="security/selinux/hooks.c"
+          HASHTAB="security/selinux/ss/hashtab.c"
+          EBITMAP="security/selinux/ss/ebitmap.c"
+          AVTAB="security/selinux/ss/avtab.c"
+          SERVICES="security/selinux/ss/services.c"
+          AVC="security/selinux/avc.c"
+          NETLINK="security/selinux/netlink.c"
+          STATUS="security/selinux/status.c"
 
-          for sym in "${SYMBOLS[@]}"; do
-            # Find which .c file contains the 'static' definition of the symbol
-            # We look in security/selinux and its subdirectories
-            FILE=$(grep -lE "^static .*\b$sym\b" security/selinux/*.c security/selinux/ss/*.c 2>/dev/null | head -n 1)
-
-            if [ -n "$FILE" ]; then
-              echo "✅ Found $sym in $FILE. Stripping static and exporting..."
-              # Remove 'static' keyword
-              sed -i "s/^static \(.*$sym\)/\1/g" "$FILE"
-              # Ensure EXPORT_SYMBOL_GPL is at the bottom
-              sed -i "/EXPORT_SYMBOL_GPL($sym)/d" "$FILE"
-              echo "EXPORT_SYMBOL_GPL($sym);" >> "$FILE"
-            else
-              # If not found as static, check if it's already global but just not exported
-              FILE_GLOBAL=$(grep -lE "^.*\b$sym\b" security/selinux/*.c security/selinux/ss/*.c 2>/dev/null | head -n 1)
-              if [ -n "$FILE_GLOBAL" ]; then
-                 echo "ℹ️ $sym is already global in $FILE_GLOBAL. Exporting..."
-                 sed -i "/EXPORT_SYMBOL_GPL($sym)/d" "$FILE_GLOBAL"
-                 echo "EXPORT_SYMBOL_GPL($sym);" >> "$FILE_GLOBAL"
+          # Function to strip static and export specifically for Samsung's 5.4 syntax
+          export_symbol() {
+              local file=$1
+              local sym=$2
+              if [ -f "$file" ]; then
+                  echo "Processing $sym in $file"
+                  # Remove 'static' even if it's preceded by tabs/spaces or followed by __read_mostly
+                  sed -i "s/static \(.*$sym\)/\1/g" "$file"
+                  # Ensure the symbol is not marked as static in any way
+                  sed -i "s/static struct/struct/g" "$file" 2>/dev/null || true
+                  # Delete existing export to avoid duplicates, then add at end
+                  sed -i "/EXPORT_SYMBOL_GPL($sym)/d" "$file"
+                  echo "EXPORT_SYMBOL_GPL($sym);" >> "$file"
               else
-                 echo "⚠️ Warning: Could not find $sym in security/selinux/"
+                  echo "⚠️ $file not found, searching for $sym..."
+                  ACTUAL_FILE=$(grep -l "$sym" security/selinux/*.c security/selinux/ss/*.c | head -n 1)
+                  if [ -n "$ACTUAL_FILE" ]; then
+                      sed -i "s/static \(.*$sym\)/\1/g" "$ACTUAL_FILE"
+                      echo "EXPORT_SYMBOL_GPL($sym);" >> "$ACTUAL_FILE"
+                  fi
               fi
-            fi
-          done   
+          }
+
+          # Execute exports
+          export_symbol "$HOOKS" "selinux_state"
+          export_symbol "$HOOKS" "selinux_blob_sizes"
+          export_symbol "$HASHTAB" "hashtab_search"
+          export_symbol "$HASHTAB" "hashtab_insert"
+          export_symbol "$EBITMAP" "ebitmap_set_bit"
+          export_symbol "$EBITMAP" "ebitmap_get_bit"
+          export_symbol "$AVTAB" "avtab_search_node"
+          export_symbol "$AVTAB" "avtab_search_node_next"
+          export_symbol "$AVTAB" "avtab_insert_nonunique"
+          export_symbol "$AVC" "avc_ss_reset"
+          export_symbol "$NETLINK" "selnl_notify_policyload"
+          
+          # Status.c might not exist in 5.4, check services.c instead
+          if [ -f "$STATUS" ]; then
+              export_symbol "$STATUS" "selinux_status_update_policyload"
+          else
+              export_symbol "$SERVICES" "selinux_status_update_policyload"
+          fi
+
+          # 2. Fix the header visibility
+          # This forces the symbols to be seen as 'extern' by KernelSU
+          echo "Updating security.h..."
+          cat <<EOF >> security/selinux/include/security.h
+          extern struct selinux_state selinux_state;
+          extern struct lsm_blob_sizes selinux_blob_sizes;
+          EOF   
+    
       - name: ⚙️ Generate Kernel Configuration
         run: |
           export ARCH=arm64
