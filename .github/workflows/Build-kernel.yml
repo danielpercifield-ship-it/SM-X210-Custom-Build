@@ -37,28 +37,30 @@ jobs:
      
       - name: 🩹 Final Code Fixes
         run: |
-          # Architecture & BPF fixes
+          # 1. FIX PERMISSIONS & LINE ENDINGS
+          chmod -R +x scripts/
+          find . -type f -name "*.sh" -exec chmod +x {} +
+          find . -type f -name "Kconfig*" -exec dos2unix {} +
+          find . -type f -name "*.sh" -exec dos2unix {} +
+
+          # 2. ARCHITECTURE & BPF FIXES
           sed -i '/extern unsigned long vdso_offset_/d' arch/arm64/include/asm/vdso.h || true
           sed -i '/#define TRACE_INCLUDE_PATH/c\#define TRACE_INCLUDE_PATH ../../kernel/sched/walt' kernel/sched/walt/trace.h || true
           sed -i 's|register unsigned long current_stack_pointer asm ("sp");|#define current_stack_pointer ({ unsigned long sp; asm("mov %0, sp" : "=r"(sp)); sp; })|g' arch/arm64/include/asm/stack_pointer.h || true
           
-          # Samsung USB-C Typos
+          # 3. SAMSUNG USB-C TYPOS
           sed -i 's|"inc/tcpci.h"|"tcpci.h"|g' drivers/usb/typec/P86801_tcpc/inc/pd_dpm_pdo_select.h || true
           sed -i 's|"../inc/tcpci.h"|"inc/tcpci.h"|g' drivers/usb/typec/P86801_tcpc/tcpc_rt1711h.c || true
           sed -i 's|"../../inc/tcpci.h"|"../inc/tcpci.h"|g' drivers/usb/typec/P86801_tcpc/aw35615/aw35615_driver.c || true
           
-          # Stub missing Samsung symbols
-          echo -e "\nvoid handle_decomp_fail(void) {}\nvoid md_dump_slabinfo(void) {}\n" >> init/main.c
-          
-          # === THE FLASK.H FIX ===
-          # Copy headers to the kernelsu directory so the #include "flask.h" finds them locally
+          # 4. KSU HEADER PLUMBING (Solves 'flask.h not found')
           cp security/selinux/include/flask.h drivers/kernelsu/
           cp security/selinux/include/av_permissions.h drivers/kernelsu/
-          
-          # Symlink ksu include path
           mkdir -p drivers/kernelsu/kernel
           ln -s ../ksu.h drivers/kernelsu/kernel/ksu.h || true
 
+          # 5. SAMSUNG SYMBOL STUBS
+          echo -e "\nvoid handle_decomp_fail(void) {}\nvoid md_dump_slabinfo(void) {}\n" >> init/main.c
 
       - name: ⚙️ Kernel Config
         run: |
