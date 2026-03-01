@@ -16,7 +16,7 @@ jobs:
       - name: 📥 Checkout Kernel Source
         uses: actions/checkout@v4
 
-      - name: 🗄️ Compiler Cache
+      - name: 🗄️ Restore Compiler Cache
         uses: actions/cache@v4
         with:
           path: .ccache
@@ -89,7 +89,7 @@ jobs:
           sed -i 's|"../../inc/tcpci.h"|"../inc/tcpci.h"|g' drivers/usb/typec/P86801_tcpc/aw35615/aw35615_driver.c || true
           sed -i 's|"../inc/tcpci.h"|"inc/tcpci.h"|g' drivers/usb/typec/P86801_tcpc/tcpci_core.c || true
           
-      - name: 🔑 Force Linker to Keep SELinux Symbols (Surgical Mode)
+      - name: 🔑 Force Linker to Keep SELinux Symbols (Word Boundary Mode)
         run: |
           # 1. Clean existing exports to prevent duplicate definition errors
           SYMS="selinux_state selinux_blob_sizes hashtab_search hashtab_insert ebitmap_set_bit ebitmap_get_bit avtab_search_node avtab_search_node_next avtab_insert_nonunique avc_ss_reset selnl_notify_policyload selinux_status_update_policyload"
@@ -97,22 +97,26 @@ jobs:
               find security/selinux -name "*.c" -exec sed -i "/EXPORT_SYMBOL.*($sym)/d" {} + || true
           done
 
-          # 2. Surgically strip 'static' AND 'inline' ONLY from definitions in .c files
-          perl -pi -e 's/static\s+struct\s+selinux_state\s+selinux_state/struct selinux_state selinux_state/g' security/selinux/hooks.c
-          perl -pi -e 's/static\s+struct\s+lsm_blob_sizes\s+selinux_blob_sizes/struct lsm_blob_sizes selinux_blob_sizes/g' security/selinux/hooks.c
-          perl -pi -e 's/static\s+(inline\s+)?int\s+hashtab_search/int hashtab_search/g' security/selinux/ss/hashtab.c
-          perl -pi -e 's/static\s+(inline\s+)?int\s+hashtab_insert/int hashtab_insert/g' security/selinux/ss/hashtab.c
-          perl -pi -e 's/static\s+(inline\s+)?int\s+ebitmap_set_bit/int ebitmap_set_bit/g' security/selinux/ss/ebitmap.c
-          perl -pi -e 's/static\s+(inline\s+)?int\s+ebitmap_get_bit/int ebitmap_get_bit/g' security/selinux/ss/ebitmap.c
-          perl -pi -e 's/static\s+(inline\s+)?struct\s+avtab_node\s*\*\s*avtab_search_node\(/struct avtab_node *avtab_search_node(/g' security/selinux/ss/avtab.c
-          perl -pi -e 's/static\s+(inline\s+)?struct\s+avtab_node\s*\*\s*avtab_search_node_next/struct avtab_node *avtab_search_node_next/g' security/selinux/ss/avtab.c
-          perl -pi -e 's/static\s+(inline\s+)?struct\s+avtab_node\s*\*\s*avtab_insert_nonunique/struct avtab_node *avtab_insert_nonunique/g' security/selinux/ss/avtab.c
-          perl -pi -e 's/static\s+(inline\s+)?void\s+avc_ss_reset/void avc_ss_reset/g' security/selinux/avc.c
-          perl -pi -e 's/static\s+(inline\s+)?void\s+selnl_notify_policyload/void selnl_notify_policyload/g' security/selinux/netlink.c
-          perl -pi -e 's/static\s+(inline\s+)?void\s+selinux_status_update_policyload/void selinux_status_update_policyload/g' security/selinux/ss/services.c || true
-          perl -pi -e 's/static\s+(inline\s+)?void\s+selinux_status_update_policyload/void selinux_status_update_policyload/g' security/selinux/status.c || true
+          # 2. Use pure word boundaries to strip 'static' exactly where it matters.
+          perl -pi -e 's/\bstatic\s+struct\s+selinux_state\s+selinux_state/struct selinux_state selinux_state/g' security/selinux/hooks.c
+          perl -pi -e 's/\bstatic\s+struct\s+lsm_blob_sizes\s+selinux_blob_sizes/struct lsm_blob_sizes selinux_blob_sizes/g' security/selinux/hooks.c
+          perl -pi -e 's/\bstatic\s+int\s+hashtab_search/int hashtab_search/g' security/selinux/ss/hashtab.c
+          perl -pi -e 's/\bstatic\s+int\s+hashtab_insert/int hashtab_insert/g' security/selinux/ss/hashtab.c
+          perl -pi -e 's/\bstatic\s+int\s+ebitmap_set_bit/int ebitmap_set_bit/g' security/selinux/ss/ebitmap.c
+          perl -pi -e 's/\bstatic\s+int\s+ebitmap_get_bit/int ebitmap_get_bit/g' security/selinux/ss/ebitmap.c
+          perl -pi -e 's/\bstatic\s+struct\s+avtab_node\s*\*\s*avtab_search_node\(/struct avtab_node *avtab_search_node(/g' security/selinux/ss/avtab.c
+          perl -pi -e 's/\bstatic\s+struct\s+avtab_node\s*\*\s*avtab_search_node_next/struct avtab_node *avtab_search_node_next/g' security/selinux/ss/avtab.c
+          perl -pi -e 's/\bstatic\s+struct\s+avtab_node\s*\*\s*avtab_insert_nonunique/struct avtab_node *avtab_insert_nonunique/g' security/selinux/ss/avtab.c
+          perl -pi -e 's/\bstatic\s+void\s+avc_ss_reset/void avc_ss_reset/g' security/selinux/avc.c
+          perl -pi -e 's/\bstatic\s+void\s+selnl_notify_policyload/void selnl_notify_policyload/g' security/selinux/netlink.c
+          
+          if [ -f security/selinux/status.c ]; then
+              perl -pi -e 's/\bstatic\s+void\s+selinux_status_update_policyload/void selinux_status_update_policyload/g' security/selinux/status.c
+          else
+              perl -pi -e 's/\bstatic\s+void\s+selinux_status_update_policyload/void selinux_status_update_policyload/g' security/selinux/ss/services.c
+          fi
 
-          # 3. Inject EXPORT_SYMBOL_GPL at the end of files with the correct header
+          # 3. Inject EXPORT_SYMBOL_GPL at the end of files
           echo -e "\n#include <linux/export.h>\nEXPORT_SYMBOL_GPL(selinux_state);" >> security/selinux/hooks.c
           echo "EXPORT_SYMBOL_GPL(selinux_blob_sizes);" >> security/selinux/hooks.c
           echo -e "\n#include <linux/export.h>\nEXPORT_SYMBOL_GPL(hashtab_search);" >> security/selinux/ss/hashtab.c
@@ -140,8 +144,8 @@ jobs:
           fi
           
           # 5. Global Header Visibility
-          echo "extern struct selinux_state selinux_state;" >> security/selinux/include/security.h
-          echo "extern struct lsm_blob_sizes selinux_blob_sizes;" >> security/selinux/include/security.h
+          echo -e "\nextern struct selinux_state selinux_state;" >> security/selinux/include/security.h
+          echo -e "\nextern struct lsm_blob_sizes selinux_blob_sizes;" >> security/selinux/include/security.h
           
       - name: ⚙️ Generate Kernel Configuration
         run: |
@@ -218,7 +222,7 @@ jobs:
           export CCACHE_DIR=$GITHUB_WORKSPACE/.ccache
           ccache -M 5G
           
-          # Pass 1 catches KSU's auto-patcher mid-flight
+          # Added -fno-lto to explicitly ban Clang from optimizing away our exports
           make ARCH=arm64 \
           CC="ccache clang --target=aarch64-linux-gnu" \
           CROSS_COMPILE=aarch64-linux-gnu- \
@@ -237,11 +241,11 @@ jobs:
                    -Wno-error=strict-prototypes \
                    -Wno-error=incompatible-pointer-types \
                    -Wno-error=format-invalid-specifier \
+                   -fno-lto \
                    -I$(pwd)/security/selinux/include \
                    -I$(pwd)/drivers" \
           Image || echo "✅ First pass completed. KSU patched the tree. Starting Pass 2..."
           
-          # Pass 2 solidifies the patched files into the final image
           make ARCH=arm64 \
           CC="ccache clang --target=aarch64-linux-gnu" \
           CROSS_COMPILE=aarch64-linux-gnu- \
@@ -260,6 +264,7 @@ jobs:
                    -Wno-error=strict-prototypes \
                    -Wno-error=incompatible-pointer-types \
                    -Wno-error=format-invalid-specifier \
+                   -fno-lto \
                    -I$(pwd)/security/selinux/include \
                    -I$(pwd)/drivers" \
           Image
