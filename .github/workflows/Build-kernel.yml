@@ -154,7 +154,7 @@ jobs:
           ./scripts/config --file .config --disable SECURITY_DEFEX
           ./scripts/config --file .config --disable SEC_RESTRICT_FORK
           
-          # USER FIXES: Disable optimizations that strip our custom exports
+          # Disable optimizations that strip our custom exports
           ./scripts/config --file .config --disable TRIM_UNUSED_KSYMS
           ./scripts/config --file .config --disable UNUSED_SYMBOLS
           ./scripts/config --file .config --disable LTO
@@ -196,34 +196,12 @@ jobs:
           cp security/selinux/include/flask.h drivers/kernelsu/flask.h
           cp security/selinux/include/av_permissions.h drivers/kernelsu/av_permissions.h
       
-      - name: 🔨 Compile Kernel (DOUBLE MAKE RESTORED)
+      - name: 🔨 Compile Kernel
         run: |
           export CCACHE_DIR=$GITHUB_WORKSPACE/.ccache
           ccache -M 5G
           
-          # Pass 1 catches KSU's auto-patcher mid-flight
-          make ARCH=arm64 \
-          CC="ccache clang --target=aarch64-linux-gnu" \
-          CROSS_COMPILE=aarch64-linux-gnu- \
-          LD=ld.lld \
-          AR=llvm-ar \
-          NM=llvm-nm \
-          OBJCOPY=llvm-objcopy \
-          OBJDUMP=llvm-objdump \
-          STRIP=llvm-strip \
-          HOSTCC=gcc \
-          -j$(nproc --all) \
-          KCFLAGS="-Wno-error=implicit-function-declaration \
-                   -Wno-error=implicit-int \
-                   -Wno-error=int-conversion \
-                   -Wno-error=unused-but-set-variable \
-                   -Wno-error=strict-prototypes \
-                   -Wno-error=incompatible-pointer-types \
-                   -Wno-error=format-invalid-specifier \
-                   -I$(pwd)/security/selinux/include" \
-          Image || echo "✅ First pass completed. KSU patched the tree. Starting Pass 2..."
-          
-          # Pass 2 solidifies the patched files into the final image
+          # Clean, single build pass
           make ARCH=arm64 \
           CC="ccache clang --target=aarch64-linux-gnu" \
           CROSS_COMPILE=aarch64-linux-gnu- \
