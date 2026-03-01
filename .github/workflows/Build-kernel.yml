@@ -70,9 +70,13 @@ jobs:
           sed -i 's/0 = 0;/\/\/ 0 = 0;/g' drivers/kernelsu/app_profile.c || true
           sed -i 's/NULL = NULL;/\/\/ NULL = NULL;/g' drivers/kernelsu/app_profile.c || true
           
-          # Fix KernelSU-Next SELinux structure for Kernel 5.4
+          # Fix KernelSU-Next SELinux structure for Kernel 5.4 (USER FIX)
+          find drivers/kernelsu/selinux/ -type f -name "*.c" -exec sed -i 's|selinux_status_update_policyload(0);|selinux_status_update_policyload(\&selinux_state, 0);|g' {} + || true
+          find drivers/kernelsu/selinux/ -type f -name "*.c" -exec sed -i 's|selinux_status_update_policyload(1);|selinux_status_update_policyload(\&selinux_state, 1);|g' {} + || true
           sed -i 's|db = \&policydb;|db = \&selinux_state.ss->policydb;|g' drivers/kernelsu/selinux/rules.c || true
-          sed -i 's|selinux_status_update_policyload(0);|selinux_status_update_policyload(\&selinux_state, 0);|g' drivers/kernelsu/selinux/rules.c || true
+
+          # Fix the "selinux_blob_sizes" visibility (USER FIX)
+          sed -i 's/static struct lsm_blob_sizes selinux_blob_sizes/struct lsm_blob_sizes selinux_blob_sizes/g' security/selinux/hooks.c || true
           
           # Fix USB-C header path
           find drivers/usb/typec -name "pd_dpm_pdo_select.h" -exec sed -i 's|"inc/tcpci.h"|"tcpci.h"|g' {} + || true
@@ -84,66 +88,53 @@ jobs:
           sed -i '/tiny_sulog\.o/d' drivers/kernelsu/Makefile || true
           
           # === SAMSUNG MISSING SYMBOL STUBS ===
-          # Inject empty functions so the linker stops crying about missing Samsung debug logs
           echo -e "\nvoid handle_decomp_fail(void) {}\nvoid md_dump_slabinfo(void) {}\n" >> init/main.c
    
-      - name: 🔑 Brute Force Export SELinux Symbols
+      - name: 🔑 Brute Force Export SELinux Symbols (User Fix)
         run: |
-          # 1. Define target files based on SM-X210 / Kernel 5.4 structure
-          HOOKS="security/selinux/hooks.c"
-          HASHTAB="security/selinux/ss/hashtab.c"
-          EBITMAP="security/selinux/ss/ebitmap.c"
-          AVTAB="security/selinux/ss/avtab.c"
-          SERVICES="security/selinux/ss/services.c"
-          AVC="security/selinux/avc.c"
-          NETLINK="security/selinux/netlink.c"
-          STATUS="security/selinux/status.c"
-
-          # Function to strip static and export specifically for Samsung's 5.4 syntax
-          export_symbol() {
+          # This function removes 'static' and adds EXPORT_SYMBOL
+          force_export() {
               local file=$1
               local sym=$2
               if [ -f "$file" ]; then
-                  echo "Processing $sym in $file"
-                  # Remove 'static' even if it's preceded by tabs/spaces or followed by __read_mostly
-                  sed -i "s/static \(.*$sym\)/\1/g" "$file"
-                  # Ensure the symbol is not marked as static in any way
-                  sed -i "s/static struct/struct/g" "$file" 2>/dev/null || true
-                  # Delete existing export to avoid duplicates, then add at end
-                  sed -i "/EXPORT_SYMBOL_GPL($sym)/d" "$file"
+                  echo "Exporting $sym in $file"
+                  # Remove static keyword
+                  sed -i "s/^static \(.* $sym\)/\1/" "$file"
+                  sed -i "s/^static inline \(.* $sym\)/\1/" "$file"
+                  # Remove existing exports to prevent double-export errors
+                  sed -i "/EXPORT_SYMBOL.*($sym)/d" "$file"
+                  # Add export at the end
                   echo "EXPORT_SYMBOL_GPL($sym);" >> "$file"
-              else
-                  echo "⚠️ $file not found, searching for $sym..."
-                  ACTUAL_FILE=$(grep -l "$sym" security/selinux/*.c security/selinux/ss/*.c | head -n 1)
-                  if [ -n "$ACTUAL_FILE" ]; then
-                      sed -i "s/static \(.*$sym\)/\1/g" "$ACTUAL_FILE"
-                      echo "EXPORT_SYMBOL_GPL($sym);" >> "$ACTUAL_FILE"
-                  fi
               fi
           }
 
-          # Execute exports
-          export_symbol "$HOOKS" "selinux_state"
-          export_symbol "$HOOKS" "selinux_blob_sizes"
-          export_symbol "$HASHTAB" "hashtab_search"
-          export_symbol "$HASHTAB" "hashtab_insert"
-          export_symbol "$EBITMAP" "ebitmap_set_bit"
-          export_symbol "$EBITMAP" "ebitmap_get_bit"
-          export_symbol "$AVTAB" "avtab_search_node"
-          export_symbol "$AVTAB" "avtab_search_node_next"
-          export_symbol "$AVTAB" "avtab_insert_nonunique"
-          export_symbol "$AVC" "avc_ss_reset"
-          export_symbol "$NETLINK" "selnl_notify_policyload"
+          # Exporting core SELinux state and blobs
+          force_export "security/selinux/hooks.c" "selinux_state"
+          force_export "security/selinux/hooks.c" "selinux_blob_sizes"
           
-          # Status.c might not exist in 5.4, check services.c instead
-          if [ -f "$STATUS" ]; then
-              export_symbol "$STATUS" "selinux_status_update_policyload"
+          # Exporting Hash table and Bitmaps (used by KSU to inject rules)
+          force_export "security/selinux/ss/hashtab.c" "hashtab_search"
+          force_export "security/selinux/ss/hashtab.c" "hashtab_insert"
+          force_export "security/selinux/ss/ebitmap.c" "ebitmap_set_bit"
+          force_export "security/selinux/ss/ebitmap.c" "ebitmap_get_bit"
+          
+          # Exporting Access Vector Tables
+          force_export "security/selinux/ss/avtab.c" "avtab_search_node"
+          force_export "security/selinux/ss/avtab.c" "avtab_search_node_next"
+          force_export "security/selinux/ss/avtab.c" "avtab_insert_nonunique"
+          
+          # Exporting notification services
+          force_export "security/selinux/avc.c" "avc_ss_reset"
+          force_export "security/selinux/netlink.c" "selnl_notify_policyload"
+          
+          # Handle status vs services for policyload
+          if grep -q "selinux_status_update_policyload" security/selinux/status.c 2>/dev/null; then
+              force_export "security/selinux/status.c" "selinux_status_update_policyload"
           else
-              export_symbol "$SERVICES" "selinux_status_update_policyload"
+              force_export "security/selinux/ss/services.c" "selinux_status_update_policyload"
           fi
-
-          # 2. Fix the header visibility (Foolproof single-line echoes)
-          echo "Updating security.h..."
+          
+          # Fix the header visibility
           echo "extern struct selinux_state selinux_state;" >> security/selinux/include/security.h
           echo "extern struct lsm_blob_sizes selinux_blob_sizes;" >> security/selinux/include/security.h
     
@@ -169,12 +160,15 @@ jobs:
           ./scripts/config --file .config --enable SECURITY_SELINUX
           ./scripts/config --file .config --enable SECURITY_SELINUX_BOOTPARAM
           ./scripts/config --file .config --disable SECURITY_SELINUX_DISABLE
+          ./scripts/config --file .config --disable SECURITY_SELINUX_DEVELOP
           
           # Disable Samsung specific security that blocks KSU
           ./scripts/config --file .config --disable SECURITY_DEFEX
           ./scripts/config --file .config --disable SEC_RESTRICT_FORK
           
-          # USER FIX: Disable LTO to prevent the linker from deleting the exported SELinux symbols
+          # USER FIX: Disable LTO and Garbage Collection to protect exported symbols
+          ./scripts/config --file .config --disable TRIM_UNUSED_KSYMS
+          ./scripts/config --file .config --disable UNUSED_SYMBOLS
           ./scripts/config --file .config --disable LTO
           ./scripts/config --file .config --disable LTO_CLANG
           ./scripts/config --file .config --disable THINLTO
@@ -215,11 +209,13 @@ jobs:
           cp security/selinux/include/flask.h drivers/kernelsu/flask.h
           cp security/selinux/include/av_permissions.h drivers/kernelsu/av_permissions.h
       
-      - name: 🔨 Compile Kernel (DOUBLE MAKE)
+      - - name: 🔨 Compile Kernel
         run: |
           export CCACHE_DIR=$GITHUB_WORKSPACE/.ccache
           ccache -M 5G
           
+          # We use a single pass. If this fails, the export script above needs 
+          # one more symbol added to its list.
           make ARCH=arm64 \
           CC="ccache clang --target=aarch64-linux-gnu" \
           CROSS_COMPILE=aarch64-linux-gnu- \
@@ -231,21 +227,14 @@ jobs:
           STRIP=llvm-strip \
           HOSTCC=gcc \
           -j$(nproc --all) \
-          KCFLAGS="-Wno-error=implicit-function-declaration -Wno-error=implicit-int -Wno-error=int-conversion -Wno-error=unused-but-set-variable -Wno-error=strict-prototypes -Isecurity/selinux/include" \
-          Image || echo "✅ First pass completed. KSU patched the tree. Starting Pass 2..."
-          
-          make ARCH=arm64 \
-          CC="ccache clang --target=aarch64-linux-gnu" \
-          CROSS_COMPILE=aarch64-linux-gnu- \
-          LD=ld.lld \
-          AR=llvm-ar \
-          NM=llvm-nm \
-          OBJCOPY=llvm-objcopy \
-          OBJDUMP=llvm-objdump \
-          STRIP=llvm-strip \
-          HOSTCC=gcc \
-          -j$(nproc --all) \
-          KCFLAGS="-Wno-error=implicit-function-declaration -Wno-error=implicit-int -Wno-error=int-conversion -Wno-error=unused-but-set-variable -Wno-error=strict-prototypes -Isecurity/selinux/include" \
+          KCFLAGS="-Wno-error=implicit-function-declaration \
+                   -Wno-error=implicit-int \
+                   -Wno-error=int-conversion \
+                   -Wno-error=unused-but-set-variable \
+                   -Wno-error=strict-prototypes \
+                   -Wno-error=incompatible-pointer-types \
+                   -Wno-error=format-invalid-specifier \
+                   -I$(pwd)/security/selinux/include" \
           Image
       
       - name: 📦 Package Output
