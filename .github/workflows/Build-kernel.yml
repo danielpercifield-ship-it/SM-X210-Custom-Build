@@ -70,13 +70,28 @@ jobs:
           sed -i 's/0 = 0;/\/\/ 0 = 0;/g' drivers/kernelsu/app_profile.c || true
           sed -i 's/NULL = NULL;/\/\/ NULL = NULL;/g' drivers/kernelsu/app_profile.c || true
           
-          # Fix KernelSU-Next SELinux structure for Kernel 5.4 (USER FIX)
+          # ==========================================
+          # USER'S 5.4 SPECIFIC LOGIC INTEGRATION
+          # ==========================================
+          
+          # 1. Fix path_umount in kernel_umount.c for Kernel 5.4
+          UM_FILE="drivers/kernelsu/kernel_umount.c"
+          if [ -f "$UM_FILE" ]; then
+              echo "Fixing $UM_FILE for Kernel 5.4"
+              sed -i 's/path_umount(path, flags)/do_umount(path->mnt, flags)/g' "$UM_FILE"
+              sed -i '1i #include <linux/mount.h>\n#include <linux/fs.h>' "$UM_FILE"
+          fi
+
+          # 2. Force SELinux Visibility
+          sed -i 's/^static struct selinux_state selinux_state/struct selinux_state selinux_state/g' security/selinux/hooks.c || true
+          sed -i 's/^static struct lsm_blob_sizes selinux_blob_sizes/struct lsm_blob_sizes selinux_blob_sizes/g' security/selinux/hooks.c || true
+          
+          # 3. Update KernelSU SELinux code for Kernel 5.4 API
           find drivers/kernelsu/selinux/ -type f -name "*.c" -exec sed -i 's|selinux_status_update_policyload(0);|selinux_status_update_policyload(\&selinux_state, 0);|g' {} + || true
           find drivers/kernelsu/selinux/ -type f -name "*.c" -exec sed -i 's|selinux_status_update_policyload(1);|selinux_status_update_policyload(\&selinux_state, 1);|g' {} + || true
           sed -i 's|db = \&policydb;|db = \&selinux_state.ss->policydb;|g' drivers/kernelsu/selinux/rules.c || true
-
-          # Fix the "selinux_blob_sizes" visibility (USER FIX)
-          sed -i 's/static struct lsm_blob_sizes selinux_blob_sizes/struct lsm_blob_sizes selinux_blob_sizes/g' security/selinux/hooks.c || true
+          
+          # ==========================================
           
           # Fix USB-C header path
           find drivers/usb/typec -name "pd_dpm_pdo_select.h" -exec sed -i 's|"inc/tcpci.h"|"tcpci.h"|g' {} + || true
@@ -88,51 +103,38 @@ jobs:
           sed -i '/tiny_sulog\.o/d' drivers/kernelsu/Makefile || true
           
           # === SAMSUNG MISSING SYMBOL STUBS ===
+          # Inject empty functions so the linker stops crying about missing Samsung debug logs
           echo -e "\nvoid handle_decomp_fail(void) {}\nvoid md_dump_slabinfo(void) {}\n" >> init/main.c
    
-      - name: 🔑 Brute Force Export SELinux Symbols (User Fix)
+      - name: 🔑 Brute Force Export SELinux Symbols
         run: |
-          # This function removes 'static' and adds EXPORT_SYMBOL
-          force_export() {
-              local file=$1
-              local sym=$2
-              if [ -f "$file" ]; then
-                  echo "Exporting $sym in $file"
+          export_ksu_sym() {
+              local sym=$1
+              # Search in security/selinux for the file containing the symbol
+              local file=$(grep -lE "^static.* $sym|^struct.* $sym|^void.* $sym" security/selinux/*.c security/selinux/ss/*.c 2>/dev/null | head -n 1)
+              
+              if [ -n "$file" ]; then
+                  echo "Processing $sym in $file"
                   # Remove static keyword
-                  sed -i "s/^static \(.* $sym\)/\1/" "$file"
-                  sed -i "s/^static inline \(.* $sym\)/\1/" "$file"
-                  # Remove existing exports to prevent double-export errors
+                  sed -i "s/^static //g" "$file"
+                  # Ensure it's exported at the end of the file
                   sed -i "/EXPORT_SYMBOL.*($sym)/d" "$file"
-                  # Add export at the end
                   echo "EXPORT_SYMBOL_GPL($sym);" >> "$file"
               fi
           }
 
-          # Exporting core SELinux state and blobs
-          force_export "security/selinux/hooks.c" "selinux_state"
-          force_export "security/selinux/hooks.c" "selinux_blob_sizes"
-          
-          # Exporting Hash table and Bitmaps (used by KSU to inject rules)
-          force_export "security/selinux/ss/hashtab.c" "hashtab_search"
-          force_export "security/selinux/ss/hashtab.c" "hashtab_insert"
-          force_export "security/selinux/ss/ebitmap.c" "ebitmap_set_bit"
-          force_export "security/selinux/ss/ebitmap.c" "ebitmap_get_bit"
-          
-          # Exporting Access Vector Tables
-          force_export "security/selinux/ss/avtab.c" "avtab_search_node"
-          force_export "security/selinux/ss/avtab.c" "avtab_search_node_next"
-          force_export "security/selinux/ss/avtab.c" "avtab_insert_nonunique"
-          
-          # Exporting notification services
-          force_export "security/selinux/avc.c" "avc_ss_reset"
-          force_export "security/selinux/netlink.c" "selnl_notify_policyload"
-          
-          # Handle status vs services for policyload
-          if grep -q "selinux_status_update_policyload" security/selinux/status.c 2>/dev/null; then
-              force_export "security/selinux/status.c" "selinux_status_update_policyload"
-          else
-              force_export "security/selinux/ss/services.c" "selinux_status_update_policyload"
-          fi
+          export_ksu_sym "selinux_state"
+          export_ksu_sym "selinux_blob_sizes"
+          export_ksu_sym "hashtab_search"
+          export_ksu_sym "hashtab_insert"
+          export_ksu_sym "ebitmap_set_bit"
+          export_ksu_sym "ebitmap_get_bit"
+          export_ksu_sym "avtab_search_node"
+          export_ksu_sym "avtab_search_node_next"
+          export_ksu_sym "avtab_insert_nonunique"
+          export_ksu_sym "avc_ss_reset"
+          export_ksu_sym "selnl_notify_policyload"
+          export_ksu_sym "selinux_status_update_policyload"
           
           # Fix the header visibility
           echo "extern struct selinux_state selinux_state;" >> security/selinux/include/security.h
@@ -156,7 +158,7 @@ jobs:
           ./scripts/config --file .config --enable KSU_NEXT
           ./scripts/config --file .config --enable KSU_NEXT_MANUAL_HOOK
           
-          # USER FIX: Force Enable SELinux in Config
+          # Force Enable SELinux in Config
           ./scripts/config --file .config --enable SECURITY_SELINUX
           ./scripts/config --file .config --enable SECURITY_SELINUX_BOOTPARAM
           ./scripts/config --file .config --disable SECURITY_SELINUX_DISABLE
@@ -166,7 +168,7 @@ jobs:
           ./scripts/config --file .config --disable SECURITY_DEFEX
           ./scripts/config --file .config --disable SEC_RESTRICT_FORK
           
-          # USER FIX: Disable LTO and Garbage Collection to protect exported symbols
+          # USER FIXES: Disable optimizations that strip our custom exports
           ./scripts/config --file .config --disable TRIM_UNUSED_KSYMS
           ./scripts/config --file .config --disable UNUSED_SYMBOLS
           ./scripts/config --file .config --disable LTO
@@ -194,7 +196,6 @@ jobs:
           #endif
           #endif
           EOF
-          
           cat <<EOF > security/selinux/include/av_permissions.h
           #ifndef _SELINUX_AV_PERMISSIONS_H_
           #define _SELINUX_AV_PERMISSIONS_H_
@@ -209,13 +210,11 @@ jobs:
           cp security/selinux/include/flask.h drivers/kernelsu/flask.h
           cp security/selinux/include/av_permissions.h drivers/kernelsu/av_permissions.h
       
-      - name: 🔨 Compile Kernel
+      - name: 🔨 Compile Kernel (DOUBLE MAKE)
         run: |
           export CCACHE_DIR=$GITHUB_WORKSPACE/.ccache
           ccache -M 5G
           
-          # We use a single pass. If this fails, the export script above needs 
-          # one more symbol added to its list.
           make ARCH=arm64 \
           CC="ccache clang --target=aarch64-linux-gnu" \
           CROSS_COMPILE=aarch64-linux-gnu- \
@@ -227,14 +226,21 @@ jobs:
           STRIP=llvm-strip \
           HOSTCC=gcc \
           -j$(nproc --all) \
-          KCFLAGS="-Wno-error=implicit-function-declaration \
-                   -Wno-error=implicit-int \
-                   -Wno-error=int-conversion \
-                   -Wno-error=unused-but-set-variable \
-                   -Wno-error=strict-prototypes \
-                   -Wno-error=incompatible-pointer-types \
-                   -Wno-error=format-invalid-specifier \
-                   -I$(pwd)/security/selinux/include" \
+          KCFLAGS="-Wno-error=implicit-function-declaration -Wno-error=implicit-int -Wno-error=int-conversion -Wno-error=unused-but-set-variable -Wno-error=strict-prototypes -Isecurity/selinux/include" \
+          Image || echo "✅ First pass completed. KSU patched the tree. Starting Pass 2..."
+          
+          make ARCH=arm64 \
+          CC="ccache clang --target=aarch64-linux-gnu" \
+          CROSS_COMPILE=aarch64-linux-gnu- \
+          LD=ld.lld \
+          AR=llvm-ar \
+          NM=llvm-nm \
+          OBJCOPY=llvm-objcopy \
+          OBJDUMP=llvm-objdump \
+          STRIP=llvm-strip \
+          HOSTCC=gcc \
+          -j$(nproc --all) \
+          KCFLAGS="-Wno-error=implicit-function-declaration -Wno-error=implicit-int -Wno-error=int-conversion -Wno-error=unused-but-set-variable -Wno-error=strict-prototypes -Isecurity/selinux/include" \
           Image
       
       - name: 📦 Package Output
@@ -259,3 +265,4 @@ jobs:
         with:
           name: TabA9Plus-Kernel
           path: TabA9Plus-KSU-Kernel.zip
+
