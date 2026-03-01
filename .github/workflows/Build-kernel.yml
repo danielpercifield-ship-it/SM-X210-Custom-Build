@@ -49,97 +49,65 @@ jobs:
      
       - name: 🩹 Apply Deep Source Code Fixes
         run: |
-          # Architecture Fixes
-          sed -i 's|register unsigned long current_stack_pointer asm ("sp");|/* Removed global sp */ #define current_stack_pointer ({ unsigned long sp; asm("mov %0, sp" : "=r"(sp)); sp; })|g' arch/arm64/include/asm/stack_pointer.h || true
-          sed -i 's|"brk %0" : : "I"|"brk %0" : : "n"|g' arch/arm64/include/asm/kgdb.h || true
-          sed -i '/extern unsigned long vdso_offset_/d' arch/arm64/include/asm/vdso.h || true
-          sed -i 's|.*#define TRACE_INCLUDE_PATH.*|#define TRACE_INCLUDE_PATH ../../kernel/sched/walt|g' kernel/sched/walt/trace.h || true
-          
-          # Fix SELinux includes in KSU
-          sed -i 's/static inline u32 current_sid(void)/static inline u32 ksu_current_sid_dummy(void)/g' drivers/kernelsu/selinux/selinux.h || true
-          sed -i 's|#include "ss/policydb.h"|#include "../../security/selinux/ss/policydb.h"|g' drivers/kernelsu/kernel_compat.h || true
-          
-          # THE GLOBAL KSU PATH SHIFT
-          sed -i 's|<kernelsu/ksu.h>|"../kernelsu/ksu.h"|g' drivers/input/input.c || true
-          sed -i 's|<kernelsu/kernel/ksu.h>|"../kernelsu/ksu.h"|g' drivers/input/input.c || true
-          find drivers/input fs kernel -type f -name "*.c" -exec sed -i 's|kernelsu/kernel/ksu.h|kernelsu/ksu.h|g' {} + || true
-          
-          # ROBUST SECCOMP STRIP
-          sed -i 's/current->seccomp\.mode/0/g' drivers/kernelsu/app_profile.c || true
-          sed -i 's/current->seccomp\.filter/NULL/g' drivers/kernelsu/app_profile.c || true
-          sed -i 's/0 = 0;/\/\/ 0 = 0;/g' drivers/kernelsu/app_profile.c || true
-          sed -i 's/NULL = NULL;/\/\/ NULL = NULL;/g' drivers/kernelsu/app_profile.c || true
-          
-          # ==========================================
-          # USER'S 5.4 SPECIFIC LOGIC INTEGRATION
-          # ==========================================
-          
-          # 1. Fix path_umount in kernel_umount.c for Kernel 5.4
+          # 1. Fix do_umount in kernel_umount.c
+          # do_umount is an internal VFS function. We will export it in the next step.
           UM_FILE="drivers/kernelsu/kernel_umount.c"
           if [ -f "$UM_FILE" ]; then
-              echo "Fixing $UM_FILE for Kernel 5.4"
               sed -i 's/path_umount(path, flags)/do_umount(path->mnt, flags)/g' "$UM_FILE"
+              # Ensure correct headers
               sed -i '1i #include <linux/mount.h>\n#include <linux/fs.h>' "$UM_FILE"
           fi
 
-          # 2. Force SELinux Visibility
-          sed -i 's/^static struct selinux_state selinux_state/struct selinux_state selinux_state/g' security/selinux/hooks.c || true
-          sed -i 's/^static struct lsm_blob_sizes selinux_blob_sizes/struct lsm_blob_sizes selinux_blob_sizes/g' security/selinux/hooks.c || true
-          
-          # 3. Update KernelSU SELinux code for Kernel 5.4 API
+          # 2. Fix KernelSU-Next SELinux API for Kernel 5.4
+          # In 5.4, these functions require the &selinux_state pointer
           find drivers/kernelsu/selinux/ -type f -name "*.c" -exec sed -i 's|selinux_status_update_policyload(0);|selinux_status_update_policyload(\&selinux_state, 0);|g' {} + || true
           find drivers/kernelsu/selinux/ -type f -name "*.c" -exec sed -i 's|selinux_status_update_policyload(1);|selinux_status_update_policyload(\&selinux_state, 1);|g' {} + || true
           sed -i 's|db = \&policydb;|db = \&selinux_state.ss->policydb;|g' drivers/kernelsu/selinux/rules.c || true
-          
-          # ==========================================
-          
-          # Fix USB-C header path
-          find drivers/usb/typec -name "pd_dpm_pdo_select.h" -exec sed -i 's|"inc/tcpci.h"|"tcpci.h"|g' {} + || true
-          
-          # Force version defines directly into supercalls.c
-          sed -i '1i #define KSU_VERSION 11938\n#define KSU_VERSION_TAG "v1.0.0"\n#define KERNEL_SU_VERSION 11938\n#define KERNEL_SU_VERSION_TAG "v1.0.0"' drivers/kernelsu/supercalls.c || true
-          
-          # Eradicate double linking
-          sed -i '/tiny_sulog\.o/d' drivers/kernelsu/Makefile || true
-          
-          # === SAMSUNG MISSING SYMBOL STUBS ===
-          # Inject empty functions so the linker stops crying about missing Samsung debug logs
-          echo -e "\nvoid handle_decomp_fail(void) {}\nvoid md_dump_slabinfo(void) {}\n" >> init/main.c
-   
+
+          # 3. Fix objsec.h / selinux_blob_sizes visibility
+          # This header needs to know the variable is global
+          sed -i 's/extern struct lsm_blob_sizes selinux_blob_sizes;/struct lsm_blob_sizes selinux_blob_sizes;/g' security/selinux/include/objsec.h || true   
+      
       - name: 🔑 Brute Force Export SELinux Symbols
         run: |
-          export_ksu_sym() {
+          # Function to strip 'static' and add EXPORT_SYMBOL
+          nuclear_export() {
               local sym=$1
-              # Search in security/selinux for the file containing the symbol
-              local file=$(grep -lE "^static.* $sym|^struct.* $sym|^void.* $sym" security/selinux/*.c security/selinux/ss/*.c 2>/dev/null | head -n 1)
+              # Search for the definition in common SELinux and FS paths
+              local file=$(grep -lE "^static.* $sym|^struct.* $sym|^int.* $sym|^void.* $sym" security/selinux/*.c security/selinux/ss/*.c fs/*.c 2>/dev/null | head -n 1)
               
               if [ -n "$file" ]; then
-                  echo "Processing $sym in $file"
-                  # Remove static keyword
+                  echo "Found $sym in $file. Stripping static and exporting..."
+                  # Strip 'static' and 'inline' from the definition line
                   sed -i "s/^static //g" "$file"
-                  # Ensure it's exported at the end of the file
+                  sed -i "s/^static inline //g" "$file"
+                  # Strip 'static' if it has a space before it
+                  sed -i "s/ static / /g" "$file"
+                  # Ensure export exists
                   sed -i "/EXPORT_SYMBOL.*($sym)/d" "$file"
                   echo "EXPORT_SYMBOL_GPL($sym);" >> "$file"
+              else
+                  echo "⚠️ Symbol $sym not found!"
               fi
           }
 
-          export_ksu_sym "selinux_state"
-          export_ksu_sym "selinux_blob_sizes"
-          export_ksu_sym "hashtab_search"
-          export_ksu_sym "hashtab_insert"
-          export_ksu_sym "ebitmap_set_bit"
-          export_ksu_sym "ebitmap_get_bit"
-          export_ksu_sym "avtab_search_node"
-          export_ksu_sym "avtab_search_node_next"
-          export_ksu_sym "avtab_insert_nonunique"
-          export_ksu_sym "avc_ss_reset"
-          export_ksu_sym "selnl_notify_policyload"
-          export_ksu_sym "selinux_status_update_policyload"
+          # Export everything the linker is crying about
+          nuclear_export "selinux_state"
+          nuclear_export "selinux_blob_sizes"
+          nuclear_export "hashtab_search"
+          nuclear_export "hashtab_insert"
+          nuclear_export "ebitmap_set_bit"
+          nuclear_export "ebitmap_get_bit"
+          nuclear_export "avtab_search_node"
+          nuclear_export "avtab_search_node_next"
+          nuclear_export "avtab_insert_nonunique"
+          nuclear_export "avc_ss_reset"
+          nuclear_export "selnl_notify_policyload"
+          nuclear_export "selinux_status_update_policyload"
           
-          # Fix the header visibility
-          echo "extern struct selinux_state selinux_state;" >> security/selinux/include/security.h
-          echo "extern struct lsm_blob_sizes selinux_blob_sizes;" >> security/selinux/include/security.h
-    
+          # Fix the 'do_umount' symbol which is in fs/namespace.c
+          nuclear_export "do_umount"
+      
       - name: ⚙️ Generate Kernel Configuration
         run: |
           export ARCH=arm64
@@ -210,11 +178,13 @@ jobs:
           cp security/selinux/include/flask.h drivers/kernelsu/flask.h
           cp security/selinux/include/av_permissions.h drivers/kernelsu/av_permissions.h
       
-      - name: 🔨 Compile Kernel (DOUBLE MAKE)
+      - name: 🔨 Compile Kernel
         run: |
           export CCACHE_DIR=$GITHUB_WORKSPACE/.ccache
           ccache -M 5G
           
+          # We use a single pass. If this fails, the export script above needs 
+          # one more symbol added to its list.
           make ARCH=arm64 \
           CC="ccache clang --target=aarch64-linux-gnu" \
           CROSS_COMPILE=aarch64-linux-gnu- \
@@ -226,23 +196,16 @@ jobs:
           STRIP=llvm-strip \
           HOSTCC=gcc \
           -j$(nproc --all) \
-          KCFLAGS="-Wno-error=implicit-function-declaration -Wno-error=implicit-int -Wno-error=int-conversion -Wno-error=unused-but-set-variable -Wno-error=strict-prototypes -Isecurity/selinux/include" \
-          Image || echo "✅ First pass completed. KSU patched the tree. Starting Pass 2..."
+          KCFLAGS="-Wno-error=implicit-function-declaration \
+                   -Wno-error=implicit-int \
+                   -Wno-error=int-conversion \
+                   -Wno-error=unused-but-set-variable \
+                   -Wno-error=strict-prototypes \
+                   -Wno-error=incompatible-pointer-types \
+                   -Wno-error=format-invalid-specifier \
+                   -I$(pwd)/security/selinux/include" \
+          Image     
           
-          make ARCH=arm64 \
-          CC="ccache clang --target=aarch64-linux-gnu" \
-          CROSS_COMPILE=aarch64-linux-gnu- \
-          LD=ld.lld \
-          AR=llvm-ar \
-          NM=llvm-nm \
-          OBJCOPY=llvm-objcopy \
-          OBJDUMP=llvm-objdump \
-          STRIP=llvm-strip \
-          HOSTCC=gcc \
-          -j$(nproc --all) \
-          KCFLAGS="-Wno-error=implicit-function-declaration -Wno-error=implicit-int -Wno-error=int-conversion -Wno-error=unused-but-set-variable -Wno-error=strict-prototypes -Isecurity/selinux/include" \
-          Image
-      
       - name: 📦 Package Output
         run: |
           mkdir -p Final_Kernel
