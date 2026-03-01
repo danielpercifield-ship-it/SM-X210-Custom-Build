@@ -69,8 +69,8 @@ jobs:
           fi
 
           # 4. Fix KernelSU SELinux logic for 5.4 API
-          find drivers/kernelsu/selinux/ -type f -name "*.c" -exec sed -i 's|selinux_status_update_policyload(0);|selinux_status_update_policyload(\&selinux_state, 0);|g' {} + || true
-          find drivers/kernelsu/selinux/ -type f -name "*.c" -exec sed -i 's|selinux_status_update_policyload(1);|selinux_status_update_policyload(\&selinux_state, 1);|g' {} + || true
+          find drivers/kernelsu/selinux -type f -name "*.c" -exec sed -i 's|selinux_status_update_policyload(0);|selinux_status_update_policyload(\&selinux_state, 0);|g' {} + || true
+          find drivers/kernelsu/selinux -type f -name "*.c" -exec sed -i 's|selinux_status_update_policyload(1);|selinux_status_update_policyload(\&selinux_state, 1);|g' {} + || true
           sed -i 's|db = \&policydb;|db = \&selinux_state.ss->policydb;|g' drivers/kernelsu/selinux/rules.c || true
 
           # 5. Fix Architecture/Stack Fixes (KGDB/SP)
@@ -89,11 +89,11 @@ jobs:
           # 8. SAMSUNG DUMMY STUBS
           echo -e "\nvoid handle_decomp_fail(void) {}\nvoid md_dump_slabinfo(void) {}\n" >> init/main.c
           
-          # 9. FIX SAMSUNG USB-C TYPO - PROPER PATH HANDLING
-          find drivers/usb/typec/P86801_tcpc -type f -name "*.c" -exec sed -i 's|#include "inc/tcpci\.h"|#include "../inc/tcpci.h"|g' {} + || true
-          find drivers/usb/typec/P86801_tcpc -type f -name "*.h" -exec sed -i 's|#include "inc/tcpci\.h"|#include "../inc/tcpci.h"|g' {} + || true
-          find drivers/usb/typec/P86801_tcpc/aw35615 -type f -name "*.c" -exec sed -i 's|#include "\.\.\/inc/tcpci\.h"|#include "../../inc/tcpci.h"|g' {} + || true
-          sed -i 's|#include "tcpci.h"|#include "../inc/tcpci.h"|g' drivers/usb/typec/P86801_tcpc/tcpc_rt1711h.c || true
+          # 9. FIX SAMSUNG USB-C TYPOS (Clang's Exact Suggestions)
+          sed -i 's|"inc/tcpci.h"|"tcpci.h"|g' drivers/usb/typec/P86801_tcpc/inc/pd_dpm_pdo_select.h || true
+          sed -i 's|"../inc/tcpci.h"|"inc/tcpci.h"|g' drivers/usb/typec/P86801_tcpc/tcpc_rt1711h.c || true
+          sed -i 's|"../../inc/tcpci.h"|"../inc/tcpci.h"|g' drivers/usb/typec/P86801_tcpc/aw35615/aw35615_driver.c || true
+          sed -i 's|"../inc/tcpci.h"|"inc/tcpci.h"|g' drivers/usb/typec/P86801_tcpc/tcpci_core.c || true
     
       - name: 🔑 Force Linker to Keep SELinux Symbols
         run: |
@@ -221,7 +221,6 @@ jobs:
           ccache -M 5G
           
           # Pass 1 catches KSU's auto-patcher mid-flight
-          # Includes the global -I$(pwd)/drivers flag so KSU headers are always found
           make ARCH=arm64 \
           CC="ccache clang --target=aarch64-linux-gnu" \
           CROSS_COMPILE=aarch64-linux-gnu- \
