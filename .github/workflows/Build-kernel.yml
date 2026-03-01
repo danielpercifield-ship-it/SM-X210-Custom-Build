@@ -43,9 +43,9 @@ jobs:
           find . -type f -name "Kconfig*" -exec dos2unix {} +
           find . -type f -name "*.sh" -exec dos2unix {} +
 
-          # 2. AUTO-FIX TECHPACK "IMPLICIT INT" ERRORS (The fix for your current error)
-          # This finds all instances of 'static inline _name' and adds 'u32'
+          # 2. AUTO-FIX TECHPACK TYPOS
           find techpack/display -name "*.c" -exec sed -i 's/static inline _/static inline u32 _/g' {} +
+          find techpack/display -name "*.c" -exec sed -i 's/static inline u32_/static inline u32 _/g' {} +
 
           # 3. ARCHITECTURE & BPF FIXES
           sed -i '/extern unsigned long vdso_offset_/d' arch/arm64/include/asm/vdso.h || true
@@ -80,17 +80,24 @@ jobs:
           
           make ARCH=arm64 HOSTCC=gcc CC="clang --target=aarch64-linux-gnu" CROSS_COMPILE=aarch64-linux-gnu- olddefconfig
    
-      - name: 🔨 Compile (Pass 1 & Pass 2 Rebuild)
+      - name: 🔨 Compile
         run: |
           export CCACHE_DIR=$GITHUB_WORKSPACE/.ccache
           ccache -M 5G
           
           FLAGS="ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- LLVM=1 LLVM_IAS=1 HOSTCC=gcc -j$(nproc --all)"
-          K_CFLAGS="-Wno-error=implicit-function-declaration -Wno-error=strict-prototypes -I$(pwd)/security/selinux -I$(pwd)/security/selinux/include -I$(pwd)/drivers"
+          
+          # Force generation of SELinux headers before full build
+          make $FLAGS headers_install || true
+          make $FLAGS security/selinux/ || true
+          
+          # Final Compile Pass
+          K_INC="-I$(pwd)/security/selinux -I$(pwd)/security/selinux/include -I$(pwd)/drivers/kernelsu"
+          K_CFLAGS="-Wno-error=implicit-function-declaration -Wno-error=strict-prototypes $K_INC -I$(pwd)/drivers"
           
           make $FLAGS KCFLAGS="$K_CFLAGS" Image || {
-              echo "✅ Pass 1 complete. Forcing rebuild of filesystem and SELinux..."
-              rm -f fs/namespace.o security/selinux/*.o
+              echo "Re-attempting Linkage..."
+              rm -f drivers/kernelsu/*.o
               make $FLAGS KCFLAGS="$K_CFLAGS" Image
           }
           
@@ -109,7 +116,6 @@ jobs:
             cp arch/arm64/boot/Image AnyKernel3/
             cd AnyKernel3 && zip -r9 ../TabA9Plus-KSU-Kernel.zip *
           else
-            echo "::error::Kernel image not found. Build failed."
             exit 1
           fi
     
