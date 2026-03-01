@@ -1690,6 +1690,14 @@ out:
 	return retval;
 }
 
+/*
+ * Is the caller allowed to modify his namespace?
+ */
+static inline bool may_mount(void)
+{
+	return ns_capable(current->nsproxy->mnt_ns->user_ns, CAP_SYS_ADMIN);
+}
+
 static int can_umount(const struct path *path, int flags)
 {
 	struct mount *mnt = real_mount(path->mnt);
@@ -1763,13 +1771,7 @@ out_unlock:
 	namespace_unlock();
 }
 
-/*
- * Is the caller allowed to modify his namespace?
- */
-static inline bool may_mount(void)
-{
-	return ns_capable(current->nsproxy->mnt_ns->user_ns, CAP_SYS_ADMIN);
-}
+
 
 #ifdef	CONFIG_MANDATORY_FILE_LOCKING
 static bool may_mandlock(void)
