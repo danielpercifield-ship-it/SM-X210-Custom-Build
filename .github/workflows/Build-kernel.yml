@@ -96,11 +96,24 @@ jobs:
       - name: ⚙️ Kernel Config
         run: |
           export ARCH=arm64
+          # Find where the actual defconfig is hidden and copy it to the root config folder
+          REAL_DEFCONFIG=$(find arch/arm64/configs -name "gta9pwifi_eur_open_defconfig" | head -n 1)
+          if [ -z "$REAL_DEFCONFIG" ]; then
+            echo "❌ Could not find gta9pwifi_eur_open_defconfig anywhere in arch/arm64/configs!"
+            exit 1
+          fi
+          cp "$REAL_DEFCONFIG" arch/arm64/configs/gta9pwifi_eur_open_defconfig
+          
+          # Now run the make command
           make ARCH=arm64 HOSTCC=gcc CC="clang --target=aarch64-linux-gnu" CROSS_COMPILE=aarch64-linux-gnu- gta9pwifi_eur_open_defconfig
+          
+          # Enable KSU and disable LTO
           ./scripts/config --file .config --enable KSU
           ./scripts/config --file .config --enable KSU_NEXT
           ./scripts/config --file .config --disable LTO_CLANG
           ./scripts/config --file .config --disable TRIM_UNUSED_KSYMS
+          
+          # Update the config to reflect changes
           yes "" | make ARCH=arm64 HOSTCC=gcc CC="clang --target=aarch64-linux-gnu" CROSS_COMPILE=aarch64-linux-gnu- olddefconfig
    
       - name: 🔨 Resolve SELinux Headers
