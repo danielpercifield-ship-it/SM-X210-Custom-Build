@@ -46,10 +46,8 @@ jobs:
           sed -i 's/static int get_boot_mode()/static int get_boot_mode(void)/g' drivers/power/supply/wt_charger/wt_chg.c || true
           sed -i 's/static struct icnss_priv \*icnss_get_plat_priv()/static struct icnss_priv \*icnss_get_plat_priv(void)/g' drivers/soc/qcom/icnss2/main.c || true
           
-          # 3. FIX FS/EXEC.C (Clean approach)
-          # First, revert any messy inline injections
+          # 3. FIX FS/EXEC.C (First-Line Injection)
           sed -i '/ksu_handle_execveat/d' fs/exec.c
-          # Insert KSU calls at the very start of the function body to avoid declaration conflicts
           sed -i '/static int do_execveat_common(int fd, struct filename \*filename,/,/{/ s/{/{\n\tksu_handle_execveat(\&fd, \&filename, \&argv, \&envp, \&flags);\n\tksu_handle_execveat_sucompat(\&fd, \&filename, \&argv, \&envp, \&flags);/' fs/exec.c
 
           # 4. FIX IMPLICIT DECLARATIONS
@@ -58,9 +56,17 @@ jobs:
             sed -i '1i #include <kernelsu/ksu.h>' "$file"
           done
 
-          # 5. USB-C HEADER REPAIR
-          # Instead of moving files, we'll just point the include to the right spot
-          find drivers/usb/typec -type f -name "*.c" -exec sed -i 's|#include "tcpci.h"|#include "../inc/tcpci.h"|g' {} +
+          # 5. USB-C HEADER REPAIR (The Fix for your current error)
+          # We ensure tcpci.h exists in both the local directory and the inc/ directory
+          find drivers/usb/typec -name "tcpci.h" | while read -r header; do
+            dir=$(dirname "$header")
+            parent=$(dirname "$dir")
+            # Link it to the parent so #include "tcpci.h" works
+            ln -sf "$header" "$parent/tcpci.h" || true
+            # Link it to an 'inc' subfolder in the parent so #include "inc/tcpci.h" works
+            mkdir -p "$parent/inc"
+            ln -sf "$header" "$parent/inc/tcpci.h" || true
+          done
 
           # 6. SAMSUNG & TECHPACK TYPOS
           find techpack/display -name "*.c" -exec sed -i 's/static inline _/static inline u32 _/g' {} +
@@ -75,13 +81,9 @@ jobs:
           # 8. KERNELSU COMPATIBILITY & SECCOMP FIX
           mkdir -p drivers/kernelsu/kernel
           cp drivers/kernelsu/ksu.h drivers/kernelsu/kernel/ksu.h || true
-          
-          # aggresively comment out seccomp lines to prevent "0 = 0" errors
           sed -i 's/if (!!!current->seccomp.mode)/if (0)/g' drivers/kernelsu/app_profile.c || true
           sed -i 's/.*current->seccomp.mode =.*/\/\/ mode reset/g' drivers/kernelsu/app_profile.c || true
           sed -i 's/.*current->seccomp.filter =.*/\/\/ filter reset/g' drivers/kernelsu/app_profile.c || true
-          
-          # SELinux Renaming
           sed -i 's/struct selinux_state/struct ksu_selinux_state/g' drivers/kernelsu/selinux/selinux.h || true
           sed -i 's/struct selinux_state/struct ksu_selinux_state/g' drivers/kernelsu/selinux/selinux.c || true
 
