@@ -47,47 +47,47 @@ jobs:
           sed -i 's/static int get_boot_mode()/static int get_boot_mode(void)/g' drivers/power/supply/wt_charger/wt_chg.c || true
           sed -i 's/static struct icnss_priv \*icnss_get_plat_priv()/static struct icnss_priv \*icnss_get_plat_priv(void)/g' drivers/soc/qcom/icnss2/main.c || true
           
-          # 3. FIX FS/EXEC.C (Logic positioning)
+          # 3. FIX FS/EXEC.C (Clean unused variables & fix positioning)
+          # We delete the misplaced calls and the variables causing "mixing code/declarations"
           sed -i '/ksu_handle_execveat/d' fs/exec.c
-          sed -i '/static int do_execveat_common(int fd, struct filename \*filename,/,/{/ s/{/{\n\tksu_handle_execveat(\&fd, \&filename, \&argv, \&envp, \&flags);\n\tksu_handle_execveat_sucompat(\&fd, \&filename, \&argv, \&envp, \&flags);/' fs/exec.c
+          sed -i '/struct linux_binprm \*bprm;/d' fs/exec.c
+          sed -i '/struct file \*file;/d' fs/exec.c
+          # Re-insert the KSU calls at the top of the common function
+          sed -i '/static int do_execveat_common/,/{/ s/{/{\n\tksu_handle_execveat(\&fd, \&filename, \&argv, \&envp, \&flags);\n\tksu_handle_execveat_sucompat(\&fd, \&filename, \&argv, \&envp, \&flags);/' fs/exec.c
 
-          # 4. FIX IMPLICIT DECLARATIONS & INPUT.C HEADER
+          # 4. FIX IMPLICIT DECLARATIONS (Standardize Headers)
           for file in fs/open.c fs/read_write.c fs/stat.c fs/exec.c; do
-            sed -i '1i #include "../drivers/kernelsu/ksu.h"' "$file"
+            sed -i '/ksu.h/d' "$file" # Remove any previous include attempts
+            sed -i '1i #include <kernelsu/ksu.h>' "$file"
           done
-          # Force the input.c include to be local to avoid "file not found"
-          sed -i 's|<kernelsu/kernel/ksu.h>|"../kernelsu/ksu.h"|g' drivers/input/input.c || true
+          # Ensure input.c also uses the standard include
+          sed -i 's|<kernelsu/kernel/ksu.h>|<kernelsu/ksu.h>|g' drivers/input/input.c || true
+          sed -i 's|"../kernelsu/ksu.h"|<kernelsu/ksu.h>|g' drivers/input/input.c || true
 
           # 5. USB-C HEADER FLATTENER
-          # Samsung splits headers into 'inc' folders. We copy them up to the parent 
-          # so that both #include "file.h" and #include "inc/file.h" work.
           find drivers/usb/typec -type d -name "inc" | while read -r incdir; do
             parent=$(dirname "$incdir")
-            echo "Flattening $incdir into $parent"
             cp -r "$incdir"/* "$parent/" || true
           done
+          find drivers/usb/typec -type f -exec sed -i 's|#include "inc/|#include "|g' {} +
+
+          # 6. SAMSUNG & TECHPACK TYPOS
+          find techpack/display -name "*.c" -exec sed -i 's/static inline _/static inline u32 _/g' {} +
+          sed -i 's/static md_align_offset/static int md_align_offset/g' drivers/soc/qcom/minidump_log.c || true
           
-          # Also fix any remaining hardcoded "inc/" prefixes in the code now that files are flattened
-          find drivers/usb/typec -type f -exec sed -i 's|#include "inc/|#include "|g' {} +          
-          # 6. ARCHITECTURE FIXES
+          # 7. ARCHITECTURE & ZRAM FIXES
           sed -i '/extern unsigned long vdso_offset_/d' arch/arm64/include/asm/vdso.h || true
           sed -i '/#define TRACE_INCLUDE_PATH/c\#define TRACE_INCLUDE_PATH ../../kernel/sched/walt' kernel/sched/walt/trace.h || true
           sed -i 's|register unsigned long current_stack_pointer asm ("sp");|#define current_stack_pointer ({ unsigned long sp; asm("mov %0, sp" : "=r"(sp)); sp; })|g' arch/arm64/include/asm/stack_pointer.h || true
-
-          # 7. KERNELSU COMPATIBILITY & SYMLINKS
-          # Create the exact directory structure that the legacy code expects
-          mkdir -p drivers/kernelsu/kernel
-          cp drivers/kernelsu/ksu.h drivers/kernelsu/kernel/ksu.h || true
-          
-          # Use wildcards (.*) to ensure we catch the lines regardless of tabs or spacing
-          sed -i 's/if (!!!current->seccomp.mode)/if (0)/g' drivers/kernelsu/app_profile.c || true
-          sed -i 's/.*current->seccomp.mode =.*/\/\/ mode reset/g' drivers/kernelsu/app_profile.c || true
-          sed -i 's/.*current->seccomp.filter =.*/\/\/ filter reset/g' drivers/kernelsu/app_profile.c || true
-          
-          sed -i 's/struct selinux_state/struct ksu_selinux_state/g' drivers/kernelsu/selinux/selinux.h || true
-          sed -i 's/struct selinux_state/struct ksu_selinux_state/g' drivers/kernelsu/selinux/selinux.c || true
           sed -i '1i #define handle_decomp_fail(...) do {} while (0)' drivers/block/zram/zram_drv.c || true
 
+          # 8. KERNELSU COMPATIBILITY & RENAMING
+          mkdir -p drivers/kernelsu/kernel
+          cp drivers/kernelsu/ksu.h drivers/kernelsu/kernel/ksu.h || true
+          sed -i 's/if (!!!current->seccomp.mode)/if (0)/g' drivers/kernelsu/app_profile.c || true
+          sed -i 's/struct selinux_state/struct ksu_selinux_state/g' drivers/kernelsu/selinux/selinux.h || true
+          sed -i 's/struct selinux_state/struct ksu_selinux_state/g' drivers/kernelsu/selinux/selinux.c || true
+      
       - name: 🔑 Nuclear Export Symbols
         run: |
           nuclear_export() {
@@ -140,14 +140,13 @@ jobs:
           ccache -M 5G
           FLAGS="ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- LLVM=1 LLVM_IAS=1 HOSTCC=gcc CC=clang -j$(nproc --all)"
           
+          # We use $(pwd)/drivers to ensure <kernelsu/ksu.h> resolves to drivers/kernelsu/ksu.h
           K_INC="-I$(pwd)/security/selinux -I$(pwd)/security/selinux/include -I$(pwd)/drivers"
-         
-          K_CFLAGS="-Wno-error=implicit-function-declaration -Wno-error=strict-prototypes -Wno-error=implicit-int -Wno-error=int-conversion -Wno-error=declaration-after-statement -Wno-error=unused-variable -Wno-error=unused-but-set-variable -Wno-error=unused-function $K_INC"          
-          make $FLAGS KCFLAGS="$K_CFLAGS" Image || {
-              rm -f fs/namespace.o security/selinux/*.o drivers/kernelsu/*.o
-              
-              make $FLAGS KCFLAGS="$K_CFLAGS" Image
-          }
+          
+          # Cleaned up flags to ignore the "messy" parts of the legacy code
+          K_CFLAGS="-Wno-error=implicit-function-declaration -Wno-error=strict-prototypes -Wno-error=implicit-int -Wno-error=int-conversion -Wno-error=declaration-after-statement -Wno-error=unused-variable -Wno-error=unused-but-set-variable -Wno-error=unused-function $K_INC"
+          
+          make $FLAGS KCFLAGS="$K_CFLAGS" Image
           
       - name: 📦 Package Output
         run: |
