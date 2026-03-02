@@ -73,7 +73,11 @@ jobs:
           mkdir -p drivers/kernelsu/kernel
           cp drivers/kernelsu/ksu.h drivers/kernelsu/kernel/ksu.h || true
           
+          # Use wildcards (.*) to ensure we catch the lines regardless of tabs or spacing
           sed -i 's/if (!!!current->seccomp.mode)/if (0)/g' drivers/kernelsu/app_profile.c || true
+          sed -i 's/.*current->seccomp.mode =.*/\/\/ mode reset/g' drivers/kernelsu/app_profile.c || true
+          sed -i 's/.*current->seccomp.filter =.*/\/\/ filter reset/g' drivers/kernelsu/app_profile.c || true
+          
           sed -i 's/struct selinux_state/struct ksu_selinux_state/g' drivers/kernelsu/selinux/selinux.h || true
           sed -i 's/struct selinux_state/struct ksu_selinux_state/g' drivers/kernelsu/selinux/selinux.c || true
           sed -i '1i #define handle_decomp_fail(...) do {} while (0)' drivers/block/zram/zram_drv.c || true
