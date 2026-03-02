@@ -58,11 +58,13 @@ jobs:
           # Force the input.c include to be local to avoid "file not found"
           sed -i 's|<kernelsu/kernel/ksu.h>|"../kernelsu/ksu.h"|g' drivers/input/input.c || true
 
-          # 5. SAMSUNG & TECHPACK TYPOS
-          find techpack/display -name "*.c" -exec sed -i 's/static inline _/static inline u32 _/g' {} +
-          sed -i 's/static md_align_offset/static int md_align_offset/g' drivers/soc/qcom/minidump_log.c || true
-          find drivers/usb/typec -type f -name "*.c" -exec sed -i 's|#include "tcpci.h"|#include "../inc/tcpci.h"|g' {} +
+          # 5. USB-C RELATIVE PATH FIXER
+          # This strips the redundant "inc/" prefix from includes in the USB-C driver folder
+          find drivers/usb/typec -type f -name "*.h" -exec sed -i 's|#include "inc/|#include "|g' {} +
+          find drivers/usb/typec -type f -name "*.c" -exec sed -i 's|#include "inc/|#include "|g' {} +
           
+          # This ensures that even if it's looking for the base header, it finds it locally
+          find drivers/usb/typec -type f -exec sed -i 's|#include "tcpci.h"|#include "tcpci.h"|g' {} +          
           # 6. ARCHITECTURE FIXES
           sed -i '/extern unsigned long vdso_offset_/d' arch/arm64/include/asm/vdso.h || true
           sed -i '/#define TRACE_INCLUDE_PATH/c\#define TRACE_INCLUDE_PATH ../../kernel/sched/walt' kernel/sched/walt/trace.h || true
