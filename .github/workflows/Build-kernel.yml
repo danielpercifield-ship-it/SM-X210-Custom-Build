@@ -17,7 +17,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: 🗄️ Restore Compiler Cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache@v4
         with:
           path: .ccache
           key: ksu-ccache-${{ github.run_id }}
@@ -64,12 +64,10 @@ jobs:
         run: |
           nuclear_export() {
               local sym=$1
-              local file=$(grep -lE "^static.* $sym|^struct.* $sym|^int.* $sym|^void.* $sym" security/selinux/*.c security/selinux/ss/*.c fs/*.c 2>/dev/null | head -n 1)
+              local file=$(grep -lE "^static.* $sym|^struct.* $sym|^int.* $sym|^void.* $sym" security/selinux/*.c security/selinux/ss/*.c fs/*.c drivers/kernelsu/*.c 2>/dev/null | head -n 1)
               if [ -n "$file" ]; then
-                  echo "Nuclear Exporting $sym in $file"
                   sed -i "s/^static //g" "$file"
                   sed -i "s/^static inline //g" "$file"
-                  sed -i "/EXPORT_SYMBOL.*($sym)/d" "$file"
                   echo "EXPORT_SYMBOL_GPL($sym);" >> "$file"
               fi
           }
@@ -78,8 +76,6 @@ jobs:
           nuclear_export "hashtab_search"
           nuclear_export "hashtab_insert"
           nuclear_export "do_umount"
-          
-          # Force header visibility
           echo "extern struct selinux_state selinux_state;" >> security/selinux/include/security.h
           echo "extern struct lsm_blob_sizes selinux_blob_sizes;" >> security/selinux/include/security.h
 
@@ -88,20 +84,18 @@ jobs:
           export ARCH=arm64
           DEFCONFIG_FILE=$(find . -name "gta9pwifi_eur_open_defconfig" | head -n 1)
           cp "$DEFCONFIG_FILE" arch/arm64/configs/gta9pwifi_eur_open_defconfig
-          
           make ARCH=arm64 HOSTCC=gcc CC="clang --target=aarch64-linux-gnu" CROSS_COMPILE=aarch64-linux-gnu- gta9pwifi_eur_open_defconfig
-          
           ./scripts/config --file .config --enable KSU
           ./scripts/config --file .config --enable KSU_NEXT
           ./scripts/config --file .config --enable SECURITY_SELINUX
           ./scripts/config --file .config --disable LTO_CLANG
           ./scripts/config --file .config --disable TRIM_UNUSED_KSYMS
-          
           make ARCH=arm64 HOSTCC=gcc CC="clang --target=aarch64-linux-gnu" CROSS_COMPILE=aarch64-linux-gnu- olddefconfig
    
-      - name: 🔨 Resolve SELinux Headers (The Flask Hack)
+      - name: 🔨 Resolve SELinux Headers (Final Version)
         run: |
           mkdir -p security/selinux/include
+          # This includes the missing SIDTAB define that caused the last crash
           cat <<EOF > security/selinux/include/flask.h
           #ifndef _SELINUX_FLASK_H_
           #define _SELINUX_FLASK_H_
@@ -109,33 +103,24 @@ jobs:
           #define SECCLASS_FILE 2
           #define SECINITSID_KERNEL 1
           #define SECINITSID_NUM 27
+          #define CONFIG_SECURITY_SELINUX_SIDTAB_HASH_BITS 9
           #endif
           EOF
           touch security/selinux/include/av_permissions.h
           cp security/selinux/include/flask.h drivers/kernelsu/flask.h
           cp security/selinux/include/av_permissions.h drivers/kernelsu/av_permissions.h
 
-      - name: 🔨 Compile (Pass 1 & 2 Rebuild)
+      - name: 🔨 Compile
         run: |
           export CCACHE_DIR=$GITHUB_WORKSPACE/.ccache
           ccache -M 5G
-          
           FLAGS="ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- LLVM=1 LLVM_IAS=1 HOSTCC=gcc -j$(nproc --all)"
           K_INC="-I$(pwd)/security/selinux -I$(pwd)/security/selinux/include -I$(pwd)/drivers"
           K_CFLAGS="-Wno-error=implicit-function-declaration -Wno-error=strict-prototypes $K_INC"
-          
           make $FLAGS KCFLAGS="$K_CFLAGS" Image || {
-              echo "✅ Pass 1 finished. Cleaning for Final Pass..."
               rm -f fs/namespace.o security/selinux/*.o drivers/kernelsu/*.o
               make $FLAGS KCFLAGS="$K_CFLAGS" Image
           }
-          
-      - name: 💾 Save Compiler Cache
-        uses: actions/cache/save@v4
-        if: always()
-        with:
-          path: .ccache
-          key: ksu-ccache-${{ github.run_id }}
           
       - name: 📦 Package Output
         run: |
@@ -145,7 +130,6 @@ jobs:
             cp arch/arm64/boot/Image AnyKernel3/
             cd AnyKernel3 && zip -r9 ../TabA9Plus-KSU-Kernel.zip *
           else
-            echo "::error::Kernel image not found. Build failed."
             exit 1
           fi
     
@@ -154,3 +138,4 @@ jobs:
         with:
           name: TabA9Plus-Kernel
           path: TabA9Plus-KSU-Kernel.zip
+
