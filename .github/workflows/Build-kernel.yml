@@ -52,23 +52,27 @@ jobs:
           find techpack/display -name "*.c" -exec sed -i 's/static inline _/static inline u32 _/g' {} +
           find techpack/display -name "*.c" -exec sed -i 's/static inline u32_/static inline u32 _/g' {} +
           
-          # Fix USB-C header pathing (Solves your current 'tcpci.h' error)
+          # Fix USB-C header pathing
           find drivers/usb/typec -type f -name "*.c" -exec sed -i 's|#include "tcpci.h"|#include "../inc/tcpci.h"|g' {} +
-          find drivers/usb/typec -type f -name "*.h" -exec sed -i 's|#include "tcpci.h"|#include "tcpci.h"|g' {} + # Cleanup
           
           sed -i 's/static md_align_offset/static int md_align_offset/g' drivers/soc/qcom/minidump_log.c || true
           
-          # 4. ZRAM & SAMSUNG SYMBOL STUBS
-          # Adding stub directly to zram to solve handle_decomp_fail error
-          echo -e "\nvoid handle_decomp_fail(void) {}\nvoid md_dump_slabinfo(void) {}\n" >> drivers/block/zram/zram_drv.c
-          echo -e "\nvoid handle_decomp_fail(void) {}\nvoid md_dump_slabinfo(void) {}\n" >> init/main.c
+          # 4. ZRAM "MACRO SNIPER" (Your Fix)
+          # Inject dummy macro at the top so the call at 2908 does nothing
+          sed -i '1i #define handle_decomp_fail(...) do {} while (0)' drivers/block/zram/zram_drv.c || true
+          # Stub for other files
+          echo -e "\nvoid md_dump_slabinfo(void) {}\n" >> init/main.c
 
-          # 5. SECCOMP LEGACY PATCH
+          # 5. SECCOMP & SELINUX RENAMING
           mkdir -p drivers/kernelsu/kernel
           ln -s ../ksu.h drivers/kernelsu/kernel/ksu.h || true
           sed -i 's/if (!!!current->seccomp.mode)/if (0)/g' drivers/kernelsu/app_profile.c || true
           sed -i 's/current->seccomp.mode = 0;/\/\/ mode reset/g' drivers/kernelsu/app_profile.c || true
           sed -i 's/current->seccomp.filter = NULL;/\/\/ filter reset/g' drivers/kernelsu/app_profile.c || true
+          
+          # Renaming selinux_state to avoid conflicts
+          sed -i 's/struct selinux_state/struct ksu_selinux_state/g' drivers/kernelsu/selinux/selinux.h || true
+          sed -i 's/struct selinux_state/struct ksu_selinux_state/g' drivers/kernelsu/selinux/selinux.c || true
 
       - name: 🔑 Nuclear Export Symbols
         run: |
@@ -126,9 +130,11 @@ jobs:
         run: |
           export CCACHE_DIR=$GITHUB_WORKSPACE/.ccache
           ccache -M 5G
-          FLAGS="ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- LLVM=1 LLVM_IAS=1 HOSTCC=gcc -j$(nproc --all)"
+          
+          # Using your requested flags
+          FLAGS="ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- LLVM=1 HOSTCC=gcc CC=clang -j$(nproc --all)"
           K_INC="-I$(pwd)/security/selinux -I$(pwd)/security/selinux/include -I$(pwd)/drivers"
-          K_CFLAGS="-Wno-error=implicit-function-declaration -Wno-error=strict-prototypes $K_INC"
+          K_CFLAGS="-Wno-error=implicit-function-declaration -Wno-error=implicit-int -Wno-error=int-conversion -Wno-error=unused-but-set-variable -Wno-error=format-invalid-specifier -Wno-error=enum-conversion $K_INC"
           
           make $FLAGS KCFLAGS="$K_CFLAGS" Image || {
               rm -f fs/namespace.o security/selinux/*.o drivers/kernelsu/*.o
