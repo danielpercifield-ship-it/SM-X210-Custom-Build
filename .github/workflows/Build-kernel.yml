@@ -58,13 +58,17 @@ jobs:
           # Force the input.c include to be local to avoid "file not found"
           sed -i 's|<kernelsu/kernel/ksu.h>|"../kernelsu/ksu.h"|g' drivers/input/input.c || true
 
-          # 5. USB-C RELATIVE PATH FIXER
-          # This strips the redundant "inc/" prefix from includes in the USB-C driver folder
-          find drivers/usb/typec -type f -name "*.h" -exec sed -i 's|#include "inc/|#include "|g' {} +
-          find drivers/usb/typec -type f -name "*.c" -exec sed -i 's|#include "inc/|#include "|g' {} +
+          # 5. USB-C HEADER FLATTENER
+          # Samsung splits headers into 'inc' folders. We copy them up to the parent 
+          # so that both #include "file.h" and #include "inc/file.h" work.
+          find drivers/usb/typec -type d -name "inc" | while read -r incdir; do
+            parent=$(dirname "$incdir")
+            echo "Flattening $incdir into $parent"
+            cp -r "$incdir"/* "$parent/" || true
+          done
           
-          # This ensures that even if it's looking for the base header, it finds it locally
-          find drivers/usb/typec -type f -exec sed -i 's|#include "tcpci.h"|#include "tcpci.h"|g' {} +          
+          # Also fix any remaining hardcoded "inc/" prefixes in the code now that files are flattened
+          find drivers/usb/typec -type f -exec sed -i 's|#include "inc/|#include "|g' {} +          
           # 6. ARCHITECTURE FIXES
           sed -i '/extern unsigned long vdso_offset_/d' arch/arm64/include/asm/vdso.h || true
           sed -i '/#define TRACE_INCLUDE_PATH/c\#define TRACE_INCLUDE_PATH ../../kernel/sched/walt' kernel/sched/walt/trace.h || true
@@ -137,12 +141,11 @@ jobs:
           FLAGS="ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- LLVM=1 LLVM_IAS=1 HOSTCC=gcc CC=clang -j$(nproc --all)"
           
           K_INC="-I$(pwd)/security/selinux -I$(pwd)/security/selinux/include -I$(pwd)/drivers"
-          
-          # Added -Wno-error=unused-but-set-variable and -Wno-error=unused-function for extra safety
-          K_CFLAGS="-Wno-error=implicit-function-declaration -Wno-error=strict-prototypes -Wno-error=implicit-int -Wno-error=int-conversion -Wno-error=declaration-after-statement -Wno-error=unused-variable -Wno-error=unused-but-set-variable -Wno-error=unused-function $K_INC"
-          
+         
+          K_CFLAGS="-Wno-error=implicit-function-declaration -Wno-error=strict-prototypes -Wno-error=implicit-int -Wno-error=int-conversion -Wno-error=declaration-after-statement -Wno-error=unused-variable -Wno-error=unused-but-set-variable -Wno-error=unused-function $K_INC"          
           make $FLAGS KCFLAGS="$K_CFLAGS" Image || {
               rm -f fs/namespace.o security/selinux/*.o drivers/kernelsu/*.o
+              
               make $FLAGS KCFLAGS="$K_CFLAGS" Image
           }
           
