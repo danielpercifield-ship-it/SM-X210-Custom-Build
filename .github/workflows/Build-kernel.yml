@@ -17,7 +17,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: 🗄️ Restore Compiler Cache
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: .ccache
           key: ksu-ccache-${{ github.run_id }}
@@ -51,18 +51,24 @@ jobs:
           # 3. SAMSUNG TYPOS (DISPLAY, USB, & SOC)
           find techpack/display -name "*.c" -exec sed -i 's/static inline _/static inline u32 _/g' {} +
           find techpack/display -name "*.c" -exec sed -i 's/static inline u32_/static inline u32 _/g' {} +
-          find drivers/usb/typec -type f -exec sed -i 's|"inc/tcpci.h"|"tcpci.h"|g' {} + || true
+          
+          # Fix USB-C header pathing (Solves your current 'tcpci.h' error)
+          find drivers/usb/typec -type f -name "*.c" -exec sed -i 's|#include "tcpci.h"|#include "../inc/tcpci.h"|g' {} +
+          find drivers/usb/typec -type f -name "*.h" -exec sed -i 's|#include "tcpci.h"|#include "tcpci.h"|g' {} + # Cleanup
+          
           sed -i 's/static md_align_offset/static int md_align_offset/g' drivers/soc/qcom/minidump_log.c || true
           
-          # 4. SECCOMP LEGACY PATCH
+          # 4. ZRAM & SAMSUNG SYMBOL STUBS
+          # Adding stub directly to zram to solve handle_decomp_fail error
+          echo -e "\nvoid handle_decomp_fail(void) {}\nvoid md_dump_slabinfo(void) {}\n" >> drivers/block/zram/zram_drv.c
+          echo -e "\nvoid handle_decomp_fail(void) {}\nvoid md_dump_slabinfo(void) {}\n" >> init/main.c
+
+          # 5. SECCOMP LEGACY PATCH
           mkdir -p drivers/kernelsu/kernel
           ln -s ../ksu.h drivers/kernelsu/kernel/ksu.h || true
           sed -i 's/if (!!!current->seccomp.mode)/if (0)/g' drivers/kernelsu/app_profile.c || true
           sed -i 's/current->seccomp.mode = 0;/\/\/ mode reset/g' drivers/kernelsu/app_profile.c || true
           sed -i 's/current->seccomp.filter = NULL;/\/\/ filter reset/g' drivers/kernelsu/app_profile.c || true
-
-          # 5. SAMSUNG DUMMY STUBS
-          echo -e "\nvoid handle_decomp_fail(void) {}\nvoid md_dump_slabinfo(void) {}\n" >> init/main.c
 
       - name: 🔑 Nuclear Export Symbols
         run: |
@@ -88,13 +94,16 @@ jobs:
           export ARCH=arm64
           DEFCONFIG_FILE=$(find . -name "gta9pwifi_eur_open_defconfig" | head -n 1)
           cp "$DEFCONFIG_FILE" arch/arm64/configs/gta9pwifi_eur_open_defconfig
+          
           make ARCH=arm64 HOSTCC=gcc CC="clang --target=aarch64-linux-gnu" CROSS_COMPILE=aarch64-linux-gnu- gta9pwifi_eur_open_defconfig
+          
           ./scripts/config --file .config --enable KSU
           ./scripts/config --file .config --enable KSU_NEXT
           ./scripts/config --file .config --enable SECURITY_SELINUX
           ./scripts/config --file .config --disable LTO_CLANG
           ./scripts/config --file .config --disable TRIM_UNUSED_KSYMS
-          make ARCH=arm64 HOSTCC=gcc CC="clang --target=aarch64-linux-gnu" CROSS_COMPILE=aarch64-linux-gnu- olddefconfig
+          
+          yes "" | make ARCH=arm64 HOSTCC=gcc CC="clang --target=aarch64-linux-gnu" CROSS_COMPILE=aarch64-linux-gnu- olddefconfig
    
       - name: 🔨 Resolve SELinux Headers
         run: |
@@ -120,10 +129,18 @@ jobs:
           FLAGS="ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- LLVM=1 LLVM_IAS=1 HOSTCC=gcc -j$(nproc --all)"
           K_INC="-I$(pwd)/security/selinux -I$(pwd)/security/selinux/include -I$(pwd)/drivers"
           K_CFLAGS="-Wno-error=implicit-function-declaration -Wno-error=strict-prototypes $K_INC"
-          make $FLAGS Image || {
+          
+          make $FLAGS KCFLAGS="$K_CFLAGS" Image || {
               rm -f fs/namespace.o security/selinux/*.o drivers/kernelsu/*.o
               make $FLAGS KCFLAGS="$K_CFLAGS" Image
           }
+          
+      - name: 💾 Save Compiler Cache
+        uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: .ccache
+          key: ksu-ccache-${{ github.run_id }}
           
       - name: 📦 Package Output
         run: |
@@ -141,4 +158,3 @@ jobs:
         with:
           name: TabA9Plus-Kernel
           path: TabA9Plus-KSU-Kernel.zip
-
