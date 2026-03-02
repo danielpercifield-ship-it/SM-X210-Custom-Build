@@ -63,6 +63,17 @@ jobs:
           # Stub for other files
           echo -e "\nvoid md_dump_slabinfo(void) {}\n" >> init/main.c
 
+          # Fix implicit declarations by adding the header to fs files
+          for file in fs/open.c fs/read_write.c fs/stat.c fs/exec.c; do
+            if ! grep -q "ksu.h" "$file"; then
+              sed -i '1i #include "../drivers/kernelsu/ksu.h"' "$file"
+            fi
+          done
+
+          # Cleanup Techpack and other typos
+          find techpack/display -name "*.c" -exec sed -i 's/static inline _/static inline u32 _/g' {} +
+          sed -i 's/static md_align_offset/static int md_align_offset/g' drivers/soc/qcom/minidump_log.c || true
+
           # 5. SECCOMP & SELINUX RENAMING
           mkdir -p drivers/kernelsu/kernel
           ln -s ../ksu.h drivers/kernelsu/kernel/ksu.h || true
