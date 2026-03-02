@@ -47,22 +47,20 @@ jobs:
           sed -i 's/static int get_boot_mode()/static int get_boot_mode(void)/g' drivers/power/supply/wt_charger/wt_chg.c || true
           sed -i 's/static struct icnss_priv \*icnss_get_plat_priv()/static struct icnss_priv \*icnss_get_plat_priv(void)/g' drivers/soc/qcom/icnss2/main.c || true
           
-          # 3. FIX FS/EXEC.C (Clean unused variables & fix positioning)
-          # We delete the misplaced calls and the variables causing "mixing code/declarations"
+          # 3. FIX FS/EXEC.C (Surgical Injection)
+          # First, remove ONLY the misplaced KSU calls we added (not the variables!)
           sed -i '/ksu_handle_execveat/d' fs/exec.c
-          sed -i '/struct linux_binprm \*bprm;/d' fs/exec.c
-          sed -i '/struct file \*file;/d' fs/exec.c
-          # Re-insert the KSU calls at the top of the common function
-          sed -i '/static int do_execveat_common/,/{/ s/{/{\n\tksu_handle_execveat(\&fd, \&filename, \&argv, \&envp, \&flags);\n\tksu_handle_execveat_sucompat(\&fd, \&filename, \&argv, \&envp, \&flags);/' fs/exec.c
+          
+          # Now, find 'do_execveat_common' and insert KSU calls AFTER the variable declarations.
+          # This avoids "mixing declarations and code" errors.
+          sed -i '/static int do_execveat_common/,/return/ { /struct file \*file;/a \\n\tksu_handle_execveat(\&fd, \&filename, \&argv, \&envp, \&flags);\n\tksu_handle_execveat_sucompat(\&fd, \&filename, \&argv, \&envp, \&flags); }' fs/exec.c
 
           # 4. FIX IMPLICIT DECLARATIONS (Standardize Headers)
           for file in fs/open.c fs/read_write.c fs/stat.c fs/exec.c; do
-            sed -i '/ksu.h/d' "$file" # Remove any previous include attempts
+            sed -i '/ksu.h/d' "$file" 
             sed -i '1i #include <kernelsu/ksu.h>' "$file"
           done
-          # Ensure input.c also uses the standard include
           sed -i 's|<kernelsu/kernel/ksu.h>|<kernelsu/ksu.h>|g' drivers/input/input.c || true
-          sed -i 's|"../kernelsu/ksu.h"|<kernelsu/ksu.h>|g' drivers/input/input.c || true
 
           # 5. USB-C HEADER FLATTENER
           find drivers/usb/typec -type d -name "inc" | while read -r incdir; do
@@ -81,12 +79,17 @@ jobs:
           sed -i 's|register unsigned long current_stack_pointer asm ("sp");|#define current_stack_pointer ({ unsigned long sp; asm("mov %0, sp" : "=r"(sp)); sp; })|g' arch/arm64/include/asm/stack_pointer.h || true
           sed -i '1i #define handle_decomp_fail(...) do {} while (0)' drivers/block/zram/zram_drv.c || true
 
-          # 8. KERNELSU COMPATIBILITY & RENAMING
+          # 8. KERNELSU COMPATIBILITY & SECCOMP FIX
           mkdir -p drivers/kernelsu/kernel
           cp drivers/kernelsu/ksu.h drivers/kernelsu/kernel/ksu.h || true
-          sed -i 's/if (!!!current->seccomp.mode)/if (0)/g' drivers/kernelsu/app_profile.c || true
+          
+          # Fix the seccomp errors by commenting out the missing members
+          sed -i 's/current->seccomp.mode = 0;/\/\/ mode reset/g' drivers/kernelsu/app_profile.c || true
+          sed -i 's/current->seccomp.filter = NULL;/\/\/ filter reset/g' drivers/kernelsu/app_profile.c || true
+          
+          # SELinux renaming
           sed -i 's/struct selinux_state/struct ksu_selinux_state/g' drivers/kernelsu/selinux/selinux.h || true
-          sed -i 's/struct selinux_state/struct ksu_selinux_state/g' drivers/kernelsu/selinux/selinux.c || true
+          sed -i 's/struct selinux_state/struct ksu_selinux_state/g' drivers/kernelsu/selinux/selinux.c || true      
       
       - name: 🔑 Nuclear Export Symbols
         run: |
