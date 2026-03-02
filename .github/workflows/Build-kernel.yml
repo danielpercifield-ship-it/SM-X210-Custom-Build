@@ -17,7 +17,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: 🗄️ Restore Compiler Cache
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: .ccache
           key: ksu-ccache-${{ github.run_id }}
@@ -53,12 +53,15 @@ jobs:
           find techpack/display -name "*.c" -exec sed -i 's/static inline u32_/static inline u32 _/g' {} +
           find drivers/usb/typec -type f -exec sed -i 's|"inc/tcpci.h"|"tcpci.h"|g' {} + || true
           
-          # 4. SAMSUNG DUMMY STUBS
-          echo -e "\nvoid handle_decomp_fail(void) {}\nvoid md_dump_slabinfo(void) {}\n" >> init/main.c
-
-          # 5. KSU PATH SHIFT
+          # 4. KSU PATH SHIFT & SECCOMP FIX (The fix for your current error)
           mkdir -p drivers/kernelsu/kernel
           ln -s ../ksu.h drivers/kernelsu/kernel/ksu.h || true
+          # Redefine seccomp access to bypass missing 'mode' and 'filter' members
+          sed -i 's/current->seccomp.mode/0/g' drivers/kernelsu/app_profile.c || true
+          sed -i 's/current->seccomp.filter/NULL/g' drivers/kernelsu/app_profile.c || true
+
+          # 5. SAMSUNG DUMMY STUBS
+          echo -e "\nvoid handle_decomp_fail(void) {}\nvoid md_dump_slabinfo(void) {}\n" >> init/main.c
 
       - name: 🔑 Nuclear Export Symbols
         run: |
@@ -92,10 +95,9 @@ jobs:
           ./scripts/config --file .config --disable TRIM_UNUSED_KSYMS
           make ARCH=arm64 HOSTCC=gcc CC="clang --target=aarch64-linux-gnu" CROSS_COMPILE=aarch64-linux-gnu- olddefconfig
    
-      - name: 🔨 Resolve SELinux Headers (Final Version)
+      - name: 🔨 Resolve SELinux Headers
         run: |
           mkdir -p security/selinux/include
-          # This includes the missing SIDTAB define that caused the last crash
           cat <<EOF > security/selinux/include/flask.h
           #ifndef _SELINUX_FLASK_H_
           #define _SELINUX_FLASK_H_
@@ -117,7 +119,8 @@ jobs:
           FLAGS="ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- LLVM=1 LLVM_IAS=1 HOSTCC=gcc -j$(nproc --all)"
           K_INC="-I$(pwd)/security/selinux -I$(pwd)/security/selinux/include -I$(pwd)/drivers"
           K_CFLAGS="-Wno-error=implicit-function-declaration -Wno-error=strict-prototypes $K_INC"
-          make $FLAGS KCFLAGS="$K_CFLAGS" Image || {
+          make $FLAGS Image || {
+              echo "Pass 1 failed, retrying linkage..."
               rm -f fs/namespace.o security/selinux/*.o drivers/kernelsu/*.o
               make $FLAGS KCFLAGS="$K_CFLAGS" Image
           }
