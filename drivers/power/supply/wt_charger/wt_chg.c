@@ -170,7 +170,7 @@ static int wtchg_hv_disable(struct wt_chg *chg, int batt_hv_disable);
 //-ReqP86801AA1-3595, liyiying.wt, add, 20230801, Configure SEC_BAT_CURRENT_EVENT_HV_DISABLE
 
 //+bug794981, tankaikun@wt, add 20220908, fix offmode usb/sdp charge timeout
-static int get_boot_mode(){
+static int get_boot_mode(void){
 	char *bootmode_string = NULL;
 	char bootmode_start[32] = " ";
 	int rc;
@@ -747,7 +747,8 @@ static void wtchg_get_batt_cycle(struct wt_chg *chg)
 
 static void wtchg_set_batt_cycle(struct wt_chg *chg)
 {
-	int ret = wtchg_write_iio_prop(chg, BMS, BATT_QG_BATTERY_CYCLE, chg->batt_cycle);
+	int ret = wtchg_write_iio_prop(chg, BMS, BATT_QG_BATTERY_CYCLE, chg->batt_cycle);
+
 	dev_info(chg->dev, "%s: chg->cycle= %d, ret = %d\n", __func__, chg->batt_cycle, ret);
 }
 
@@ -4099,7 +4100,8 @@ static int wtchg_batt_get_prop(struct power_supply *psy,
 		break;
 	case POWER_SUPPLY_PROP_PRESENT:
 		val->intval = true;
-		break;
+		break;
+
 	//PLM230714-05698,23/07/25,gudi.wt,no iocn in power off charging
 #ifdef CONFIG_QGKI_BUILD
 	case POWER_SUPPLY_PROP_ONLINE:
@@ -6043,3 +6045,4 @@ module_exit(wt_chg_exit);
 MODULE_AUTHOR("WingTech Inc.");
 MODULE_DESCRIPTION("battery driver");
 MODULE_LICENSE("GPL v2");
+
