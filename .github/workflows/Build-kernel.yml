@@ -53,12 +53,13 @@ jobs:
           find techpack/display -name "*.c" -exec sed -i 's/static inline u32_/static inline u32 _/g' {} +
           find drivers/usb/typec -type f -exec sed -i 's|"inc/tcpci.h"|"tcpci.h"|g' {} + || true
           
-          # 4. KSU PATH SHIFT & SECCOMP FIX (The fix for your current error)
+          # 4. SECCOMP LEGACY PATCH (Fixed Assignment Error)
           mkdir -p drivers/kernelsu/kernel
           ln -s ../ksu.h drivers/kernelsu/kernel/ksu.h || true
-          # Redefine seccomp access to bypass missing 'mode' and 'filter' members
-          sed -i 's/current->seccomp.mode/0/g' drivers/kernelsu/app_profile.c || true
-          sed -i 's/current->seccomp.filter/NULL/g' drivers/kernelsu/app_profile.c || true
+          # We comment out the assignments instead of replacing them with 0
+          sed -i 's/if (!!!current->seccomp.mode)/if (0)/g' drivers/kernelsu/app_profile.c || true
+          sed -i 's/current->seccomp.mode = 0;/\/\/ mode reset/g' drivers/kernelsu/app_profile.c || true
+          sed -i 's/current->seccomp.filter = NULL;/\/\/ filter reset/g' drivers/kernelsu/app_profile.c || true
 
           # 5. SAMSUNG DUMMY STUBS
           echo -e "\nvoid handle_decomp_fail(void) {}\nvoid md_dump_slabinfo(void) {}\n" >> init/main.c
@@ -119,8 +120,7 @@ jobs:
           FLAGS="ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- LLVM=1 LLVM_IAS=1 HOSTCC=gcc -j$(nproc --all)"
           K_INC="-I$(pwd)/security/selinux -I$(pwd)/security/selinux/include -I$(pwd)/drivers"
           K_CFLAGS="-Wno-error=implicit-function-declaration -Wno-error=strict-prototypes $K_INC"
-          make $FLAGS Image || {
-              echo "Pass 1 failed, retrying linkage..."
+          make $FLAGS KCFLAGS="$K_CFLAGS" Image || {
               rm -f fs/namespace.o security/selinux/*.o drivers/kernelsu/*.o
               make $FLAGS KCFLAGS="$K_CFLAGS" Image
           }
@@ -141,4 +141,3 @@ jobs:
         with:
           name: TabA9Plus-Kernel
           path: TabA9Plus-KSU-Kernel.zip
-
