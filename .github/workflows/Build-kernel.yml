@@ -47,28 +47,25 @@ jobs:
           sed -i 's/static int get_boot_mode()/static int get_boot_mode(void)/g' drivers/power/supply/wt_charger/wt_chg.c || true
           sed -i 's/static struct icnss_priv \*icnss_get_plat_priv()/static struct icnss_priv \*icnss_get_plat_priv(void)/g' drivers/soc/qcom/icnss2/main.c || true
           
-          # 3. FIX FS/EXEC.C (Surgical Injection)
-          # Clean out any previous failed manual/scripted attempts
+          # 3. FIX FS/EXEC.C (The reliable way)
+          # First, clean out any mangled attempts
           sed -i '/ksu_handle_execveat/d' fs/exec.c
           sed -i '/struct linux_binprm \*bprm;/d' fs/exec.c
           sed -i '/struct file \*file;/d' fs/exec.c
 
-          # Restore the standard declarations inside do_execveat_common
-          # and insert the KSU calls right before the return statement.
-          sed -i '/static int do_execveat_common/,/}/ { 
-            /return __do_execve_file/i \
-            \tstruct linux_binprm *bprm;\n\tstruct file *file;\n\tksu_handle_execveat(\&fd, \&filename, \&argv, \&envp, \&flags);\n\tksu_handle_execveat_sucompat(\&fd, \&filename, \&argv, \&envp, \&flags); 
-          }' fs/exec.c
+          # We find the return line and prefix it with the missing variables and KSU calls.
+          # This ensures they are inside the function scope and the variables are declared.
+          sed -i 's|return __do_execve_file|struct linux_binprm *bprm; struct file *file; ksu_handle_execveat(\&fd, \&filename, \&argv, \&envp, \&flags); ksu_handle_execveat_sucompat(\&fd, \&filename, \&argv, \&envp, \&flags); return __do_execve_file|' fs/exec.c
 
           # 4. FIX IMPLICIT DECLARATIONS (Standardize Headers)
           for file in fs/open.c fs/read_write.c fs/stat.c fs/exec.c; do
             sed -i '/ksu.h/d' "$file" 
             sed -i '1i #include <kernelsu/ksu.h>' "$file"
           done
-          # Force input.c to use standard header path
+          # Standardize input.c header
           sed -i 's|#include <kernelsu/kernel/ksu.h>|#include <kernelsu/ksu.h>|g' drivers/input/input.c || true
 
-          # 5. USB-C HEADER FLATTENER (Flatten 'inc' directories)
+          # 5. USB-C HEADER FLATTENER
           find drivers/usb/typec -type d -name "inc" | while read -r incdir; do
             parent=$(dirname "$incdir")
             cp -r "$incdir"/* "$parent/" || true
@@ -89,14 +86,14 @@ jobs:
           mkdir -p drivers/kernelsu/kernel
           cp drivers/kernelsu/ksu.h drivers/kernelsu/kernel/ksu.h || true
           
-          # Fix seccomp member errors in app_profile.c
-          sed -i 's/current->seccomp.mode = 0;/\/\/ seccomp mode reset/g' drivers/kernelsu/app_profile.c || true
-          sed -i 's/current->seccomp.filter = NULL;/\/\/ seccomp filter reset/g' drivers/kernelsu/app_profile.c || true
+          # Use broader sed for app_profile to handle all variations of the seccomp member errors
+          sed -i 's/current->seccomp.mode/0/g' drivers/kernelsu/app_profile.c || true
+          sed -i 's/current->seccomp.filter/NULL/g' drivers/kernelsu/app_profile.c || true
           
-          # SELinux struct renaming for KernelSU-Next Legacy
+          # Rename SELinux state to avoid conflict with official kernel headers
           sed -i 's/struct selinux_state/struct ksu_selinux_state/g' drivers/kernelsu/selinux/selinux.h || true
           sed -i 's/struct selinux_state/struct ksu_selinux_state/g' drivers/kernelsu/selinux/selinux.c || true
-      
+     
       - name: 🔑 Nuclear Export Symbols
         run: |
           nuclear_export() {
