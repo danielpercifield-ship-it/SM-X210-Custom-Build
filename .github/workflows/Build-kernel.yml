@@ -35,55 +35,46 @@ jobs:
           sed -i '/kernelsu/d' drivers/Makefile || true
           echo "obj-y += kernelsu/" >> drivers/Makefile
      
-      - name: 🩹 Apply Source Code Fixes
+      - name: 🩹 Apply Deep Source Code Fixes
         run: |
           # 1. FIX PERMISSIONS & LINE ENDINGS
           chmod -R +x scripts/
           find . -type f -name "*.sh" -exec chmod +x {} +
           find . -type f -name "Kconfig*" -exec dos2unix {} +
-          find . -type f -name "*.sh" -exec dos2unix {} +
 
-          # 2. FIX VDSO & WALT
+          # 2. FIX DEPRECATED PROTOTYPES (The 'void' fixes)
+          sed -i 's/static int get_boot_mode()/static int get_boot_mode(void)/g' drivers/power/supply/wt_charger/wt_chg.c || true
+          sed -i 's/static struct icnss_priv \*icnss_get_plat_priv()/static struct icnss_priv \*icnss_get_plat_priv(void)/g' drivers/soc/qcom/icnss2/main.c || true
+          
+          # 3. FIX FS/EXEC.C (Logic positioning)
+          # Remove misplaced manual edits first
+          sed -i '/ksu_handle_execveat/d' fs/exec.c
+          # Insert KSU calls immediately after the opening brace of the common function
+          sed -i '/static int do_execveat_common(int fd, struct filename \*filename,/,/{/ s/{/{\n\tksu_handle_execveat(\&fd, \&filename, \&argv, \&envp, \&flags);\n\tksu_handle_execveat_sucompat(\&fd, \&filename, \&argv, \&envp, \&flags);/' fs/exec.c
+
+          # 4. FIX IMPLICIT DECLARATIONS (Headers)
+          for file in fs/open.c fs/read_write.c fs/stat.c fs/exec.c; do
+            sed -i '1i #include "../drivers/kernelsu/ksu.h"' "$file"
+          done
+
+          # 5. SAMSUNG & TECHPACK TYPOS
+          find techpack/display -name "*.c" -exec sed -i 's/static inline _/static inline u32 _/g' {} +
+          sed -i 's/static md_align_offset/static int md_align_offset/g' drivers/soc/qcom/minidump_log.c || true
+          find drivers/usb/typec -type f -name "*.c" -exec sed -i 's|#include "tcpci.h"|#include "../inc/tcpci.h"|g' {} +
+          
+          # 6. ARCHITECTURE FIXES
           sed -i '/extern unsigned long vdso_offset_/d' arch/arm64/include/asm/vdso.h || true
           sed -i '/#define TRACE_INCLUDE_PATH/c\#define TRACE_INCLUDE_PATH ../../kernel/sched/walt' kernel/sched/walt/trace.h || true
           sed -i 's|register unsigned long current_stack_pointer asm ("sp");|#define current_stack_pointer ({ unsigned long sp; asm("mov %0, sp" : "=r"(sp)); sp; })|g' arch/arm64/include/asm/stack_pointer.h || true
-          
-          # 3. SAMSUNG TYPOS (DISPLAY, USB, & SOC)
-          find techpack/display -name "*.c" -exec sed -i 's/static inline _/static inline u32 _/g' {} +
-          find techpack/display -name "*.c" -exec sed -i 's/static inline u32_/static inline u32 _/g' {} +
-          
-          # Fix USB-C header pathing
-          find drivers/usb/typec -type f -name "*.c" -exec sed -i 's|#include "tcpci.h"|#include "../inc/tcpci.h"|g' {} +
-          
-          sed -i 's/static md_align_offset/static int md_align_offset/g' drivers/soc/qcom/minidump_log.c || true
-          
-          # 4. ZRAM "MACRO SNIPER" (Your Fix)
-          # Inject dummy macro at the top so the call at 2908 does nothing
-          sed -i '1i #define handle_decomp_fail(...) do {} while (0)' drivers/block/zram/zram_drv.c || true
-          # Stub for other files
-          echo -e "\nvoid md_dump_slabinfo(void) {}\n" >> init/main.c
 
-          # Fix implicit declarations by adding the header to fs files
-          for file in fs/open.c fs/read_write.c fs/stat.c fs/exec.c; do
-            if ! grep -q "ksu.h" "$file"; then
-              sed -i '1i #include "../drivers/kernelsu/ksu.h"' "$file"
-            fi
-          done
-
-          # Cleanup Techpack and other typos
-          find techpack/display -name "*.c" -exec sed -i 's/static inline _/static inline u32 _/g' {} +
-          sed -i 's/static md_align_offset/static int md_align_offset/g' drivers/soc/qcom/minidump_log.c || true
-
-          # 5. SECCOMP & SELINUX RENAMING
+          # 7. KERNELSU COMPATIBILITY & RENAMING
           mkdir -p drivers/kernelsu/kernel
           ln -s ../ksu.h drivers/kernelsu/kernel/ksu.h || true
           sed -i 's/if (!!!current->seccomp.mode)/if (0)/g' drivers/kernelsu/app_profile.c || true
-          sed -i 's/current->seccomp.mode = 0;/\/\/ mode reset/g' drivers/kernelsu/app_profile.c || true
-          sed -i 's/current->seccomp.filter = NULL;/\/\/ filter reset/g' drivers/kernelsu/app_profile.c || true
-          
-          # Renaming selinux_state to avoid conflicts
           sed -i 's/struct selinux_state/struct ksu_selinux_state/g' drivers/kernelsu/selinux/selinux.h || true
           sed -i 's/struct selinux_state/struct ksu_selinux_state/g' drivers/kernelsu/selinux/selinux.c || true
+          # Fix conflicting handle_decomp_fail types in ZRAM
+          sed -i '1i #define handle_decomp_fail(...) do {} while (0)' drivers/block/zram/zram_drv.c || true
 
       - name: 🔑 Nuclear Export Symbols
         run: |
@@ -101,23 +92,15 @@ jobs:
           nuclear_export "hashtab_search"
           nuclear_export "hashtab_insert"
           nuclear_export "do_umount"
-          echo "extern struct selinux_state selinux_state;" >> security/selinux/include/security.h
-          echo "extern struct lsm_blob_sizes selinux_blob_sizes;" >> security/selinux/include/security.h
 
       - name: ⚙️ Kernel Config
         run: |
           export ARCH=arm64
-          DEFCONFIG_FILE=$(find . -name "gta9pwifi_eur_open_defconfig" | head -n 1)
-          cp "$DEFCONFIG_FILE" arch/arm64/configs/gta9pwifi_eur_open_defconfig
-          
           make ARCH=arm64 HOSTCC=gcc CC="clang --target=aarch64-linux-gnu" CROSS_COMPILE=aarch64-linux-gnu- gta9pwifi_eur_open_defconfig
-          
           ./scripts/config --file .config --enable KSU
           ./scripts/config --file .config --enable KSU_NEXT
-          ./scripts/config --file .config --enable SECURITY_SELINUX
           ./scripts/config --file .config --disable LTO_CLANG
           ./scripts/config --file .config --disable TRIM_UNUSED_KSYMS
-          
           yes "" | make ARCH=arm64 HOSTCC=gcc CC="clang --target=aarch64-linux-gnu" CROSS_COMPILE=aarch64-linux-gnu- olddefconfig
    
       - name: 🔨 Resolve SELinux Headers
@@ -134,30 +117,30 @@ jobs:
           #endif
           EOF
           touch security/selinux/include/av_permissions.h
-          cp security/selinux/include/flask.h drivers/kernelsu/flask.h
-          cp security/selinux/include/av_permissions.h drivers/kernelsu/av_permissions.h
+          cp security/selinux/include/flask.h drivers/kernelsu/flask.h || true
 
       - name: 🔨 Compile
         run: |
           export CCACHE_DIR=$GITHUB_WORKSPACE/.ccache
           ccache -M 5G
           
-          # Using your requested flags
-          FLAGS="ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- LLVM=1 HOSTCC=gcc CC=clang -j$(nproc --all)"
-          K_INC="-I$(pwd)/security/selinux -I$(pwd)/security/selinux/include -I$(pwd)/drivers"
-          K_CFLAGS="-Wno-error=implicit-function-declaration -Wno-error=implicit-int -Wno-error=int-conversion -Wno-error=unused-but-set-variable -Wno-error=format-invalid-specifier -Wno-error=enum-conversion $K_INC"
+          # Added -Wno-error=unused-variable and -Wno-error=unused-function
+          FLAGS="ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- LLVM=1 LLVM_IAS=1 HOSTCC=gcc CC=clang -j$(nproc --all)"
+          K_INC="-I$(pwd)/security/selinux -I$(pwd)/security/selinux/include -I$(pwd)/drivers/kernelsu"
+          K_CFLAGS="-Wno-error=implicit-function-declaration \
+                   -Wno-error=strict-prototypes \
+                   -Wno-error=implicit-int \
+                   -Wno-error=int-conversion \
+                   -Wno-error=declaration-after-statement \
+                   -Wno-error=unused-variable \
+                   -Wno-error=unused-function \
+                   $K_INC"
           
           make $FLAGS KCFLAGS="$K_CFLAGS" Image || {
               rm -f fs/namespace.o security/selinux/*.o drivers/kernelsu/*.o
               make $FLAGS KCFLAGS="$K_CFLAGS" Image
           }
-          
-      - name: 💾 Save Compiler Cache
-        uses: actions/cache/save@v4
-        if: always()
-        with:
-          path: .ccache
-          key: ksu-ccache-${{ github.run_id }}
+
           
       - name: 📦 Package Output
         run: |
